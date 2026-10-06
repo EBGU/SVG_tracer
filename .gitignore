@@ -1,0 +1,20 @@
+# 生成物与大文件一律不入库
+out/
+output/
+bench_out/
+build/
+__pycache__/
+*.pyc
+*.log
+
+# 原始输入图（体积大）
+inputs/*.png
+inputs/*.jpg
+inputs/*.jpeg
+
+# 压缩容器不入库（仓库只留纯 SVG）
+*.svgz
+
+# 默认排除 SVG，但放行 examples/ 下的示例
+*.svg
+!examples/*.svg

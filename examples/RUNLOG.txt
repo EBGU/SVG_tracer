@@ -1,0 +1,29 @@
+SVG_tracer — examples/RUNLOG.txt
+Regenerated with the current code and defaults.
+Common flags: --gpu auto --jobs 64 --no-preview   (env: logotrace-gpu, cupy 14.2.0, RTX 4090)
+Machine was quiet during the runs (load average ~1-4). Logs were written to /tmp and are not kept here.
+Only the plain .svg files below are kept (no .svgz, per-run .log removed).
+
+
+=== inputs/apple.png   preset=logo   scale=4 ===
+command   python logo_trace.py --in inputs/apple.png --preset logo --scale 4 --gpu auto --jobs 64 --no-preview --out examples/apple_traced_scale4.svg
+退出码 0  墙钟 39s  svg 911992 B (890.6 KB)
+分区   255 区域 · 165 渐变 · 0 笔触 · 0 缝线
+
+=== inputs/openai.png   preset=logo   scale=1 ===
+command   python logo_trace.py --in inputs/openai.png --preset logo --scale 1 --gpu auto --jobs 64 --no-preview --out examples/openai_traced_scale1.svg
+退出码 0  墙钟 37s  svg 201419 B (196.7 KB)
+分区   31 区域 · 0 渐变 · 0 笔触 · 0 缝线
+
+=== inputs/water_lilies.jpg   preset=painting   scale=1 ===
+command   python logo_trace.py --in inputs/water_lilies.jpg --preset painting --scale 1 --gpu auto --jobs 64 --no-preview --out examples/water_lilies_traced_scale1.svg
+退出码 0  墙钟 119s  svg 5138876 B (5018.4 KB)
+分区   1169 区域 · 1077 渐变 · 9812 笔触 · 0 缝线
+
+=== inputs/wave.jpg   preset=painting   scale=1 ===
+command   python logo_trace.py --in inputs/wave.jpg --preset painting --scale 1 --gpu auto --jobs 64 --no-preview --out examples/wave_traced_scale1.svg
+退出码 0  墙钟 288s  svg 18363723 B (17933.3 KB)
+分区   3453 区域 · 2201 渐变 · 34799 笔触 · 0 缝线
+
+
+Totals: 4/4 exit code 0, svg 24615010 B (23.5 MB), wall clock 39+37+119+288 = 483s.

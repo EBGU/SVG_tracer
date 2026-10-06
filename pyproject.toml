@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "SVG_tracer"
+version = "1.0.0"
+description = "Trace raster images into compact SVG: color regions + gradients + structure-tensor strokes"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["svg", "vectorization", "image-tracing", "structure-tensor", "painting"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Graphics :: Vectorization",
+]
+
+[project.optional-dependencies]
+gpu = ["cupy-cuda12x"]
+
+[project.scripts]
+svg-tracer = "logo_trace:main"
+
+[tool.setuptools]
+py-modules = ["logo_trace", "gpu_backend", "cuda_backend", "svg_slim", "svgzip", "selfcheck"]
