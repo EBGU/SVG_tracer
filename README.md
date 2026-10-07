@@ -67,27 +67,39 @@ A summary is printed at the end of the console run:
 
 ## Examples
 
-All four inputs in `inputs/` traced with the current code and defaults, on a quiet machine, with the
-shared flags `--gpu auto --jobs 64 --no-preview` (sizes are the plain `.svg` files, no `.svgz`; the
-per-run logs are not stored in the repository, `examples/RUNLOG.txt` keeps the machine-readable summary):
+All four inputs in `inputs/` traced with the current code, on a quiet machine, with the shared flags
+`--gpu auto --jobs 64 --no-preview` — plus `--auto-gradient` for `apple.png`, the one smooth/glossy input
+(sizes are the plain `.svg` files, no `.svgz`; the per-run logs are not stored in the repository,
+`examples/RUNLOG.txt` keeps the machine-readable summary):
 
 | Input | Preset + scale | SVG | Regions · gradients · strokes | Wall clock |
 | --- | --- | --- | --- | --- |
-| `inputs/apple.png` | `--preset logo --scale 4` | [apple_traced_scale4.svg](examples/apple_traced_scale4.svg) — 891 KB (911,992 B) | 255 · 165 · 0 | 39 s |
+| `inputs/apple.png` | `--preset logo --scale 4 --auto-gradient` | [apple_traced_scale4.svg](examples/apple_traced_scale4.svg) — 1043 KB (1,068,362 B) | 383 · 151 · 0 | 65 s |
 | `inputs/openai.png` | `--preset logo --scale 1` | [openai_traced_scale1.svg](examples/openai_traced_scale1.svg) — 197 KB (201,419 B) | 31 · 0 · 0 | 37 s |
 | `inputs/water_lilies.jpg` | `--preset painting --scale 1` | [water_lilies_traced_scale1.svg](examples/water_lilies_traced_scale1.svg) — 5018 KB (5,138,876 B) | 1169 · 1077 · 9812 | 119 s |
 | `inputs/wave.jpg` | `--preset painting --scale 1` | [wave_traced_scale1.svg](examples/wave_traced_scale1.svg) — 17,933 KB (18,363,723 B) | 3453 · 2201 · 34,799 | 288 s |
 
 ```bash
-python logo_trace.py --in inputs/apple.png       --preset logo     --scale 4 --gpu auto --jobs 64 --no-preview --out examples/apple_traced_scale4.svg
+python logo_trace.py --in inputs/apple.png       --preset logo     --scale 4 --gpu auto --jobs 64 --no-preview --auto-gradient --out examples/apple_traced_scale4.svg
 python logo_trace.py --in inputs/openai.png      --preset logo     --scale 1 --gpu auto --jobs 64 --no-preview --out examples/openai_traced_scale1.svg
 python logo_trace.py --in inputs/water_lilies.jpg --preset painting --scale 1 --gpu auto --jobs 64 --no-preview --out examples/water_lilies_traced_scale1.svg
 python logo_trace.py --in inputs/wave.jpg        --preset painting --scale 1 --gpu auto --jobs 64 --no-preview --out examples/wave_traced_scale1.svg
 ```
 
-The two logo examples stay small and gradient-poor (openai is fully flat: 0 gradients, 0 strokes); the
-two paintings are mostly gradients and strokes, which is where the adaptive refinement and the
-gradient-aware merging earn their keep. Gradient counts include both linear and radial fits.
+The two logo examples stay small (openai is fully flat: 0 gradients, 0 strokes); the two paintings are
+mostly gradients and strokes, which is where the adaptive refinement and the gradient-aware merging earn
+their keep. Gradient counts include both linear and radial fits.
+
+`apple.png` is smooth/glossy, so it is traced with `--auto-gradient` (gradient gate 0.12 → 0.02, merge
+tolerance 0.05 → 0.3 over 8 passes, `--aa-levels 3`, `--refine-err 0.008`). Measured against the input
+at its native 250×312 render: the ≥40 px plateau share drops from 31.4 % to 23.7 % horizontally and
+from 28.5 % to 24.3 % vertically, and JUMP % from 11.71/12.64 to 11.11/11.96, for 0.9 dB of PSNR
+(34.21 → 33.35) and 152 KB. The other three examples were re-checked with the same flag and keep the
+plain command: `openai.png` comes out byte-identical with it (md5 `52b15cb8…`), while on
+`water_lilies.jpg` it costs 1.95 dB PSNR (23.78 → 21.83), raises MAE from 12.11 to 15.00/255 and
+quadruples the ≥40 px vertical plateau share (1.4 % → 5.8 %), and on `wave.jpg` it costs 1.37 dB PSNR
+(21.10 → 19.73 at 1280×861) only to shave a plateau share that was about 1 % to begin with — the route
+is for smooth artwork, not for texture-rich photos (see the `--auto-gradient` row above).
 
 ## Directory layout
 
@@ -160,7 +172,7 @@ The ones you actually reach for day to day are usually these:
 | `--snap-mode / --snap-sub` | **refine / half** | Subpixel boundary snapping in geometric regions; `half`=the 50% intensity crossing (4× more accurate than the old `peak`, +0.74 dB) |
 | `--aa-levels / --aa-width` | **0** / 2.5 | Boundary transition-band reconstruction. Once localization is accurate it gives **no benefit**, so it is off by default. **New: for a smooth image `--auto-gradient` now defaults `--aa-levels` to 3** (the smoothness test is the one `--auto-gradient` already runs); an explicit `--aa-levels N` always wins |
 | `--aa-synthetic / --aa-edge-dedup / --aa-edge-canon` | off / **on** / off | Which anti-aliasing bands are rebuilt once `--aa-levels > 0` (all three are no-ops while it is 0). Adaptive refinement cuts one original region into several children; the border between two children of the **same** original region is *synthetic* (the colors are continuous across it by construction), so a transition band there is pure byte cost. `--aa-synthetic` re-enables bands on synthetic borders (the old byte-for-byte behavior; default **off** = skip them). `--aa-edge-dedup` (**on by default**) pushes the "same original region" tag down the whole refinement tree, so uncle/cousin borders also count as synthetic instead of only one parent-child step -- measured apple `--scale 4`: **1223 → 1043 KB** with identical PSNR/MAE. `--aa-edge-canon` is a more aggressive **experimental** variant (**off by default**): keep a real-image-edge band only for the largest descendant of an original region, and drop it for the others -- it deletes real-edge AA, so it is a per-image opt-in |
-| `--auto-gradient / --grad-min-gain` | off / 0.12 | `--grad-min-gain` is the gradient acceptance gate: a linear fit must remove at least this fraction of the squared error or the region falls back to a flat fill; for smooth imagery (soft logos, rendered/near-gradient art) 0.02 ≈ removes the visible color steps. `--auto-gradient` measures image smoothness on a 64² thumbnail and lowers the gate to 0.02 by itself on smooth images (and also defaults `--aa-levels` to 3), so the gate does not have to be hand-tuned |
+| `--auto-gradient / --grad-min-gain` | off / 0.12 | `--grad-min-gain` is the gradient acceptance gate: a linear fit must remove at least this fraction of the squared error or the region falls back to a flat fill; for smooth imagery (soft logos, rendered/near-gradient art) 0.02 ≈ removes the visible color steps. `--auto-gradient` measures image smoothness on a 64² thumbnail and lowers the gate to 0.02 by itself on smooth images (and also defaults `--aa-levels` to 3), so the gate does not have to be hand-tuned. Keep it on for smooth/glossy inputs: the shipped `examples/apple_traced_scale4.svg` is generated with it (≥40 px plateau share 31.4 % → 23.7 % against 24.8 % for the source, paid for with 0.9 dB PSNR). Its smoothness test fires on the other three examples too, where it is a no-op (`openai.png`, byte-identical) or a clear loss (`water_lilies.jpg`: −1.95 dB PSNR, ≥40 px vertical plateaus 1.4 % → 5.8 %), so it intentionally stays a flag — see `## Examples` |
 | `--grad-radial / --grad-radial-margin` | **on** / 0.05 | Besides the two linear axes, also fit a **radial** candidate (centre + radius, `<radialGradient>`, same `--grad-stops` count) with the **same error/gain criterion**; it is adopted only when its residual beats the best linear residual by this margin, so genuinely linear ramps keep their linear fit. Candidates for the centre: region centroid, bounding-box centre, and the least-squares intersection of the local gradient lines (rejected when ill-conditioned). `--no-grad-radial` disables |
 | `--merge-grad / --merge-grad-tol / --merge-grad-passes` | **on** / 0.05 / 4 | Gradient-aware **spatial** region merging: k-means boundaries are hard steps by construction, so adjacent patches are re-merged whenever a single gradient (linear or radial) over the union still passes the acceptance gate **and** the union's mean squared error stays within `1 + tol` of the area-weighted mean of the two separate fills' errors. The second test protects hard-edged artwork (two flat regions have near-zero separate error, so a gradient that only bridges their step is rejected). Fixed scan order + label-indexed sample seeds make it deterministic. `--no-merge-grad` disables |
 | `--adaptive-refine` + `--refine-err / --refine-min-area / --refine-max-depth / --refine-gain / --refine-budget / --refine-order` | **on** / 0.02 / 400 / 6 / 0.20 / 0=auto / `merge-first` | **Error-driven adaptive refinement** (new): each region measures the residual of its current fill (flat / linear / radial), and a region whose core contains a *local* patch of visible error is bisected along the worst-error axis and re-fitted recursively, so a fixed SVG element budget is spent where it is actually needed and the flat color steps that used to show on smooth or glossy artwork disappear. `--refine-err` is the residual threshold (0.02 ≈ 5/255) and the trigger is local (a small patch of error barely moves a big region's global RMS); `--refine-min-area 400` keeps noise and thin seams out; `--refine-max-depth 6` bounds the recursion; `--refine-gain 0.20` requires the area-weighted child RMS to beat the parent by 20% (this is the natural protection against texture/noise and the growth valve); `--refine-budget 0` = auto `max(64, min(256, #regions))`; `--refine-order` picks refine before/after gradient merging (`merge-first` default, `refine-first` refines the raw partition first). `--no-adaptive-refine` restores the old behavior (byte-for-byte together with `--no-grad-radial --no-merge-grad`) |

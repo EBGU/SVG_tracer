@@ -1,29 +1,57 @@
 SVG_tracer — examples/RUNLOG.txt
-Regenerated with the current code and defaults.
-Common flags: --gpu auto --jobs 64 --no-preview   (env: logotrace-gpu, cupy 14.2.0, RTX 4090)
+Regenerated with the current code. Common flags: --gpu auto --jobs 64 --no-preview
+(env: logotrace-gpu, cupy 14.2.0, RTX 4090)
+apple.png is the smooth/glossy input and is traced with the additional --auto-gradient (smooth-image
+route: gradient gate 0.12 → 0.02, gradient-aware merge tolerance 0.05 → 0.3 over 8 passes, --aa-levels 3,
+--refine-err 0.008); the other three keep the plain command, see the notes under each entry.
 Machine was quiet during the runs (load average ~1-4). Logs were written to /tmp and are not kept here.
 Only the plain .svg files below are kept (no .svgz, per-run .log removed).
 
+Banding numbers below are the SVG rendered at the input's native size and compared with the input:
+plateau>=40 = share of pixels inside a run of >=40 equal values; JUMP% = share of adjacent steps larger
+than 0.02 of full scale; both horizontal / vertical.
+
 
 === inputs/apple.png   preset=logo   scale=4 ===
-command   python logo_trace.py --in inputs/apple.png --preset logo --scale 4 --gpu auto --jobs 64 --no-preview --out examples/apple_traced_scale4.svg
-退出码 0  墙钟 39s  svg 911992 B (890.6 KB)
-分区   255 区域 · 165 渐变 · 0 笔触 · 0 缝线
+command   python logo_trace.py --in inputs/apple.png --preset logo --scale 4 --gpu auto --jobs 64 --no-preview --auto-gradient --out examples/apple_traced_scale4.svg
+退出码 0  墙钟 65s  svg 1068362 B (1043.3 KB)
+分区   383 区域 · 151 渐变 · 0 笔触 · 0 缝线
+banding   plateau>=40 23.7% / 24.3%   JUMP% 11.11 / 11.96   PSNR 33.35 dB   MAE 2.581/255
+输入基准  plateau>=40 24.8% / 34.9%   JUMP% 11.20 / 11.62
+前一次(无 --auto-gradient) 911992 B, 39s, 255 区域 · 165 渐变, plateau>=40 31.4% / 28.5%,
+          JUMP% 11.71 / 12.64, PSNR 34.21 dB, MAE 2.310/255
+note      --auto-gradient is what makes this example show the improvement it is meant to show: the
+          gradient gate at 0.12 leaves the four biggest regions (40231/26580/19012/16950 px) as flat
+          fills, and refining with --refine-err 0.02 cannot repair them (a uniform 1-4/255 offset never
+          exceeds the gate, so 32 of 166 regions are never even considered). Cost of the route: 0.9 dB
+          PSNR, +152 KB, 65s instead of 39s.
 
 === inputs/openai.png   preset=logo   scale=1 ===
 command   python logo_trace.py --in inputs/openai.png --preset logo --scale 1 --gpu auto --jobs 64 --no-preview --out examples/openai_traced_scale1.svg
 退出码 0  墙钟 37s  svg 201419 B (196.7 KB)
 分区   31 区域 · 0 渐变 · 0 笔触 · 0 缝线
+note      re-checked with --auto-gradient: byte-identical output (md5 52b15cb856e7f3f143eabcde80ce3f40,
+          201419 B, same 31/0/0 counts — 0 refinements, 0 AA bands), so the plain command is kept.
 
 === inputs/water_lilies.jpg   preset=painting   scale=1 ===
 command   python logo_trace.py --in inputs/water_lilies.jpg --preset painting --scale 1 --gpu auto --jobs 64 --no-preview --out examples/water_lilies_traced_scale1.svg
 退出码 0  墙钟 119s  svg 5138876 B (5018.4 KB)
 分区   1169 区域 · 1077 渐变 · 9812 笔触 · 0 缝线
+note      re-checked with --auto-gradient (smoothness 0.0750, so it fires): 239 区域 · 232 渐变 ·
+          7521 笔触, 3157549 B (3084 KB), but worse on every metric — PSNR 23.78 → 21.83 dB,
+          MAE 12.11 → 15.00, HF detail 0.235 → 0.200, plateau>=40 2.2%/1.4% → 2.5%/5.8% at 1511x1600.
+          Plain command kept.
 
 === inputs/wave.jpg   preset=painting   scale=1 ===
 command   python logo_trace.py --in inputs/wave.jpg --preset painting --scale 1 --gpu auto --jobs 64 --no-preview --out examples/wave_traced_scale1.svg
 退出码 0  墙钟 288s  svg 18363723 B (17933.3 KB)
 分区   3453 区域 · 2201 渐变 · 34799 笔触 · 0 缝线
+note      re-checked with --auto-gradient (smoothness 0.1348, the highest of the four, so the aggressive
+          merge fires hardest): 1914 区域 · 1748 渐变 · 34011 笔触, 16749172 B (16357 KB), 297s. It does
+          shrink the blocky-plateau share (plateau>=40 1.5%/1.2% → 0.1%/0.4%, JUMP% 21.69/24.08 →
+          20.95/23.80 at 1280x861) but costs 1.37 dB PSNR (21.10 → 19.73), MAE 10.30 → 12.70 and HF
+          0.684 → 0.641. A photo has almost no >=40px plateau to begin with (the source itself measures
+          0.0%), so the fidelity loss is not worth it. Plain command kept.
 
 
-Totals: 4/4 exit code 0, svg 24615010 B (23.5 MB), wall clock 39+37+119+288 = 483s.
+Totals: 4/4 exit code 0, svg 24772380 B (23.6 MB), wall clock 65+37+119+288 = 509s.
