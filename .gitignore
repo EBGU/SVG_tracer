@@ -18,3 +18,7 @@ inputs/*.jpeg
 # 默认排除 SVG，但放行 examples/ 下的示例
 *.svg
 !examples/*.svg
+
+# 临时证据/对照图
+ tmp/
+tmp/

@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import heapq
+import io
 import math
 import os
 import re
@@ -1657,165 +1658,6 @@ def regroup_regions(rgb_s: np.ndarray, regions: list, pre: np.ndarray, merged: n
 
 
 # ======================================================================
-# 3.7 mesh-gradient fill candidate (SVG 2 meshgradient; opt-in)
-# ======================================================================
-# A single linear or radial gradient is a rank-1 model: it cannot represent a smooth 2-D colour
-# field such as a glossy highlight that curves in two directions. A Coons-patch mesh fits a coarse
-# lattice of colour stops and can, so it is offered as an extra fill candidate for large smooth
-# regions.
-#
-# COMPATIBILITY (important): SVG 2 mesh gradients are NOT implemented by mainstream browsers
-# (Chrome / Firefox / Safari) and NOT by cairosvg. A bare mesh fill would therefore leave the region
-# unpainted (cairosvg paints an unresolvable paint server black). The mesh is consequently OFF by
-# default and every mesh fill is written as an SVG 2 *paint fallback list* --
-# `fill="url(#meshN) url(#gN)"` -- so the document always names a valid non-mesh paint server for
-# the region. Renderers that do not implement paint fallback lists (cairosvg, mainstream browsers)
-# ignore the second entry, so a mesh-ON document is a structural/experimental artifact there, not a
-# faithful preview; only a mesh-capable SVG 2 renderer shows the mesh itself.
-
-MESH_SAMPLES = 60000          # cap on the pixels used for the least-squares mesh fit
-
-
-def _mesh_hat(t, n):
-    """Piecewise-linear hat basis coordinates: (lower node, upper node, upper weight)."""
-    z = np.clip(t, 0.0, 1.0) * float(n)
-    i0 = np.minimum(np.floor(z).astype(np.int64), n - 1)
-    return i0, z - i0
-
-
-def _mesh_design(u, v, n_patch):
-    """Design matrix of the bilinear Coons mesh (tensor product of hat functions)."""
-    m = n_patch + 1
-    iu, wu = _mesh_hat(u, n_patch)
-    iv, wv = _mesh_hat(v, n_patch)
-    D = np.zeros((u.size, m * m), np.float64)
-    rows = np.arange(u.size)
-    for dj, wj in ((0, 1.0 - wv), (1, wv)):
-        for di, wi in ((0, 1.0 - wu), (1, wu)):
-            D[rows, (iv + dj) * m + (iu + di)] += wi * wj
-    return D
-
-
-def fit_region_mesh(rgb_s: np.ndarray, region: dict, n_patch: int):
-    """Least-squares Coons-patch mesh over a region's bounding box.
-
-    The basis is the tensor product of piecewise-linear hat functions on a uniform (n_patch+1)
-    lattice; a straight-edged Coons patch mesh interpolates its stops in exactly that basis, so the
-    fitted nodal colours are precisely the <stop> colours to emit. The residual is evaluated over
-    the whole region (not just the fit sample) so it is directly comparable with the fallback fill.
-    """
-    mask = region["mask"]
-    ys, xs = np.nonzero(mask)
-    n = int(ys.size)
-    if n < 400:
-        return None
-    o = region["off"]
-    ax = xs.astype(np.float64) + int(o[1])
-    ay = ys.astype(np.float64) + int(o[0])
-    x0, x1 = float(ax.min()), float(ax.max())
-    y0, y1 = float(ay.min()), float(ay.max())
-    if x1 - x0 < 2.0 or y1 - y0 < 2.0:
-        return None
-    ua = (ax - x0) / (x1 - x0)
-    va = (ay - y0) / (y1 - y0)
-    obs = rgb_s[ay.astype(np.int64), ax.astype(np.int64)].astype(np.float64)
-    if n > MESH_SAMPLES:                       # deterministic stride, no rng
-        sel = np.arange(0, n, int(np.ceil(n / MESH_SAMPLES)))
-    else:
-        sel = slice(None)
-    D = _mesh_design(ua[sel], va[sel], n_patch)
-    obs_s = obs[sel]
-    # Ridge-regularised normal equations: the bbox corners of a non-rectangular region can have no
-    # nearby pixels, and a plain least-squares solve extrapolates them to impossible colours (black /
-    # saturated cyan at the outer nodes). Pulling the solution toward the region mean keeps every
-    # node inside the observed colour range; the clips below enforce that as a hard guarantee.
-    mu = obs_s.mean(0)
-    lam = 1e-3 * float(max(1, D.shape[0]))
-    try:
-        sol = np.linalg.solve(D.T @ D + lam * np.eye(D.shape[1]), D.T @ obs_s + lam * mu[None, :])
-    except np.linalg.LinAlgError:
-        sol, *_ = np.linalg.lstsq(D, obs_s, rcond=None)
-    lo = np.percentile(obs_s, 1.0, axis=0) - 0.02
-    hi = np.percentile(obs_s, 99.0, axis=0) + 0.02
-    sol = np.clip(sol, np.maximum(lo, 0.0)[None, :], np.minimum(hi, 1.0)[None, :])
-    pred = _mesh_design(ua, va, n_patch) @ sol
-    err = np.abs(obs - pred).max(1)
-    m = n_patch + 1
-    return {"nodes": np.clip(sol.reshape(m, m, 3), 0.0, 1.0),
-            "bbox": (x0, y0, x1, y1), "n_patch": int(n_patch),
-            "rms": float(np.sqrt((err ** 2).mean())), "max": float(err.max()),
-            "n_px": n}
-
-
-def apply_mesh_fills(rgb_s: np.ndarray, regions: list, args) -> dict:
-    """Give large smooth regions a mesh candidate when it clearly beats the linear/radial fill.
-
-    The current fill is kept (it becomes the SVG paint fallback); the mesh is adopted only when its
-    full-region RMS max-channel error beats the current fill's by --grad-mesh-margin.
-    """
-    margin = float(args.grad_mesh_margin)
-    min_area = int(args.grad_mesh_min_area)
-    n_patch = max(1, int(args.grad_mesh_patches))
-    thr = float(args.refine_err)
-    stats = {"tried": 0, "n": 0, "gain_sum": 0.0, "gain_max": 0.0, "rms0": 0.0, "rms1": 0.0}
-    for r in regions:
-        if r.get("bg") or r.get("aa") or r.get("detail") or int(r["area"]) < min_area:
-            continue
-        err0 = region_fill_error(rgb_s, r["mask"], r, r["off"])
-        if err0.size == 0:
-            continue
-        rms0 = float(np.sqrt((err0 ** 2).mean()))
-        if rms0 <= thr:
-            continue                              # one gradient is already good enough
-        stats["tried"] += 1
-        mesh = fit_region_mesh(rgb_s, r, n_patch)
-        if mesh is None:
-            continue
-        if mesh["rms"] <= (1.0 - margin) * rms0 and mesh["rms"] < rms0:
-            r["mesh"] = mesh
-            stats["n"] += 1
-            stats["gain_sum"] += 1.0 - mesh["rms"] / max(rms0, EPS)
-            stats["gain_max"] = max(stats["gain_max"], 1.0 - mesh["rms"] / max(rms0, EPS))
-            stats["rms0"] += rms0
-            stats["rms1"] += mesh["rms"]
-    return stats
-
-
-def _mesh_def(mid: str, mesh: dict) -> str:
-    """<meshgradient gradientUnits="userSpaceOnUse"> for a fitted lattice (SVG 2 mesh).
-
-    Stops are the four corners of each patch in the order TR, BR, BL, TL, each written as a
-    relative path from the previous stop's absolute position, so the absolute corner positions --
-    and therefore the mesh geometry -- are unambiguous.
-    """
-    n_patch = int(mesh["n_patch"])
-    m = n_patch + 1
-    x0, y0, x1, y1 = mesh["bbox"]
-    w = (x1 - x0) / n_patch
-    h = (y1 - y0) / n_patch
-    nodes = mesh["nodes"]
-    cx_, cy_ = x0, y0
-    out = [f'<meshgradient id="{mid}" gradientUnits="userSpaceOnUse" '
-           f'x="{fnum(x0)}" y="{fnum(y0)}">']
-    for j in range(n_patch):
-        out.append("<meshrow>")
-        for i in range(n_patch):
-            corners = ((x0 + (i + 1) * w, y0 + j * h, nodes[j, i + 1]),
-                       (x0 + (i + 1) * w, y0 + (j + 1) * h, nodes[j + 1, i + 1]),
-                       (x0 + i * w, y0 + (j + 1) * h, nodes[j + 1, i]),
-                       (x0 + i * w, y0 + j * h, nodes[j, i]))
-            out.append("<meshpatch>")
-            for px, py, col in corners:
-                out.append(f'<stop path="l {fnum(px - cx_)},{fnum(py - cy_)}" '
-                           f'stop-color="{to_hex(col)}"/>')
-                cx_, cy_ = px, py
-            out.append("</meshpatch>")
-        out.append("</meshrow>")
-    out.append("</meshgradient>")
-    return "".join(out)
-
-
-# ======================================================================
 # 4. contour -> SVG path
 # ======================================================================
 _REFINE_STATS = {"pts": 0, "moved": 0, "sum": 0.0}
@@ -2482,8 +2324,280 @@ def aa_band_regions(rgb: np.ndarray, entries: list, labels: np.ndarray, args,
     return out
 
 
+# ======================================================================
+# 3.8  stacked translucent radial gradients ("gradient boosting" for smooth shading)
+# ======================================================================
+# Per-region fills are fitted one region at a time, so two neighbouring fills disagree by 1..6/255
+# along their shared boundary. The eye reads those steps as flat polygonal patches (Mach banding)
+# long before the overall pixel error looks bad: on apple.png @scale4 the smooth-area error is only
+# ~1.4/255, yet 1018 of the 1165 region boundaries that sit in a locally smooth part of the source
+# carry a step >= 1/255 and 626 of them >= 4/255.
+#
+# This stage stacks N translucent radial gradients on top of the finished artwork to cancel the
+# residual shading. A layer composites as
+#
+#     new = (1 - a) * cur + a * C
+#
+# with a continuous alpha a(t) and a continuous radial colour C(t). Both are continuous in space, so a
+# boundary step d of the current render can only be *attenuated* -- to (1 - a_at_boundary) * d -- and
+# never cancelled by a smooth correction. That single fact drives the design:
+#   * alpha must be large exactly where the boundaries are, so the disks are placed on the large
+#     low-gradient areas and their colour model is fitted there;
+#   * alpha is not free but a decreasing ramp A(t) = eps * clip((1 - t) / (1 - t_edge), 0, 1), so a
+#     layer has no visible element edge at t = 1 and overlaps its neighbours smoothly;
+#   * a layer is only accepted when it strictly reduces the smooth-weighted error of its whole disk,
+#     so the stack is a boosting sequence of small improvements rather than one big gamble.
+#
+# Well-posedness: colour and alpha are inseparable in the composite (only a * (C - cur) is
+# observable), so alpha is fixed by the parametrisation above and only the radial colour curve C(t),
+# piecewise linear on --shade-stops knots, is solved for by weighted least squares. C is clamped to
+# the local target percentile range so the model cannot extrapolate into a halo where a disk overlaps
+# an edge, and non-smooth pixels inside a disk may not move by more than --shade-halo.
+#
+# Output: one <radialGradient> per layer plus one full-canvas <rect> per layer inside a single
+# <g id="shade"> group drawn last. Plain SVG 1.1 (gradientUnits="userSpaceOnUse" + stop-opacity), so
+# cairosvg and mainstream browsers paint it.
+
+
+def _shade_alpha(t, eps, tedge):
+    """Decreasing alpha ramp: eps at the centre, 0 at t = 1, so the element has no visible edge."""
+    return eps * np.clip((1.0 - t) / max(1.0 - tedge, 1e-6), 0.0, 1.0)
+
+
+def _shade_basis(t, knots):
+    """Piecewise linear hat basis on the colour knots (a partition of unity)."""
+    m = len(knots)
+    B = np.zeros((t.size, m))
+    for j in range(m):
+        lo = knots[j - 1] if j > 0 else -1e9
+        hi = knots[j + 1] if j < m - 1 else 1e9
+        B[:, j] = np.clip(np.minimum((t - lo) / max(knots[j] - lo, 1e-9),
+                                     (hi - t) / max(hi - knots[j], 1e-9)), 0.0, 1.0)
+    return B
+
+
+def _shade_win(cx, cy, r, W, H):
+    return (max(0, int(cy - r) - 1), min(H, int(cy + r) + 2),
+            max(0, int(cx - r) - 1), min(W, int(cx + r) + 2))
+
+
+def _shade_smooth_weight(src255, gtol, ttol):
+    """0..1 weight: 1 inside large low-gradient areas, 0 on texture and hard edges.
+
+    `gmag` is the smoothed gradient magnitude (an edge detector) and `tex` the smoothed energy of the
+    detail removed by a 2.5px low pass (a texture detector, which is what keeps the layers off grass,
+    noise and JPEG ringing while still allowing them on a shallow colour ramp).
+    """
+    gray = src255 @ np.array([0.299, 0.587, 0.114])
+    gx = np.zeros_like(gray)
+    gy = np.zeros_like(gray)
+    gx[:, 1:-1] = (gray[:, 2:] - gray[:, :-2]) * 0.5
+    gy[1:-1, :] = (gray[2:, :] - gray[:-2, :]) * 0.5
+    gmag = ndi.gaussian_filter(np.hypot(gx, gy), 1.5)
+    tex = ndi.gaussian_filter(((src255 - ndi.gaussian_filter(src255, (2.5, 2.5, 0.0))) ** 2).sum(-1),
+                              6.0)
+    return (np.clip(1.0 - (gmag / max(gtol, 1e-6)) ** 2, 0.0, 1.0)
+            * np.clip(1.0 - (tex / max(ttol, 1e-6)) ** 2, 0.0, 1.0))
+
+
+def _shade_candidates(rw, n, grid, margin):
+    """N non-maximum-suppressed peaks of `rw` on a coarse grid (cheap and deterministic)."""
+    H, W = rw.shape
+    gh, gw = H // grid, W // grid
+    if gh < 1 or gw < 1:
+        return [], []
+    bs = rw[:gh * grid, :gw * grid].reshape(gh, grid, gw, grid).max(axis=(1, 3))
+    out, tmp = [], bs.copy()
+    rr = max(1, int(margin // grid))
+    for _ in range(max(0, n)):
+        k = int(np.argmax(tmp))
+        iy, ix = divmod(k, bs.shape[1])
+        if tmp[iy, ix] <= 1e-9:
+            break
+        out.append((iy * grid + grid // 2, ix * grid + grid // 2))
+        tmp[max(0, iy - rr):iy + rr + 1, max(0, ix - rr):ix + rr + 1] = -1.0
+    return [o[0] for o in out], [o[1] for o in out]
+
+
+def _shade_fit_layer(src, cur, w, cx, cy, r, knots, eps, tedge, tmin, halo_cap, tau):
+    """Best radial colour curve for one candidate disk, or None when the disk is not usable.
+
+    `src`/`cur` are (H,W,3) in 0..255, `w` the smooth weight, `tmin` the share of non-smooth pixels a
+    disk interior may contain. The colour curve solves the weighted least squares problem
+    min_C sum w * a^2 * (C(t) - u)^2 with u = cur + (src - cur) / a, i.e. the colour that would make
+    the composite equal the target; a is the fixed alpha ramp, hence the a^2 in the weight.
+    """
+    H, W = src.shape[:2]
+    y0, y1, x0, x1 = _shade_win(cx, cy, r, W, H)
+    if x1 - x0 < 6 or y1 - y0 < 6:
+        return None
+    YY, XX = np.mgrid[y0:y1, x0:x1]
+    d = np.hypot(XX - cx, YY - cy)
+    inside = d <= r
+    if inside.sum() < 40:
+        return None
+    wsub = w[y0:y1, x0:x1]
+    t = np.clip(d / r, 0.0, 1.0).ravel()
+    # A disk interior that touches a hard edge is rejected outright: the radial model would have to
+    # repaint that edge, which is exactly the artefact this stage must not create.
+    inner0 = d <= 0.7 * r
+    if inner0.sum() > 0 and float((wsub[inner0] < 0.3).mean()) > tmin:
+        return None
+    a = _shade_alpha(t, eps, tedge)
+    ww = (wsub * inside).ravel()
+    wt = ww * a * a
+    if wt.sum() < 1e-6:
+        return None
+    cur_w = cur[y0:y1, x0:x1].reshape(-1, 3)
+    src_w = src[y0:y1, x0:x1].reshape(-1, 3)
+    r0 = src_w - cur_w
+    err0 = float((ww[:, None] * r0 * r0).sum())
+    if err0 <= 1e-6:
+        return None
+    B = _shade_basis(t, knots)
+    u = cur_w + r0 / np.maximum(a, 1e-4)[:, None]
+    M = B.T @ (B * wt[:, None])
+    M = M + np.eye(M.shape[0]) * (1e-8 * np.trace(M) / M.shape[0] + 1e-12)
+    col = np.stack([np.linalg.solve(M, B.T @ (wt * u[:, k])) for k in range(3)], 1)
+    inr = t < 0.8
+    if inr.sum() > 20:
+        lo = np.percentile(src_w[inr], 1, axis=0) - 2.0
+        hi = np.percentile(src_w[inr], 99, axis=0) + 2.0
+        col = np.clip(col, lo, hi)
+    col = np.clip(col, 0.0, 255.0)
+    new = (1.0 - a[:, None]) * cur_w + a[:, None] * (B @ col)
+    err1 = float((ww[:, None] * (src_w - new) ** 2).sum())
+    # Halo guard: the smooth weight ignores hard edges, so the colour model is not allowed to move
+    # non-smooth pixels inside the disk (that is precisely what a visible halo would be).
+    nsm = inside.ravel() & (ww < 0.3)
+    if nsm.any() and float(np.sqrt(((new - cur_w) ** 2)[nsm].mean())) > halo_cap:
+        return None
+    if err1 > err0 * (1.0 + tau):
+        return None
+    return {"cx": float(cx), "cy": float(cy), "r": float(r), "eps": float(eps),
+            "tedge": float(tedge), "knots": [float(k) for k in knots], "col": col,
+            "red": err0 - err1, "gain": 1.0 - err1 / err0}
+
+
+def _shade_apply(cur, lay):
+    """Composite one fitted layer into `cur` in place (same maths cairosvg performs)."""
+    H, W = cur.shape[:2]
+    y0, y1, x0, x1 = _shade_win(lay["cx"], lay["cy"], lay["r"], W, H)
+    YY, XX = np.mgrid[y0:y1, x0:x1]
+    d = np.hypot(XX - lay["cx"], YY - lay["cy"])
+    if not (d <= lay["r"]).any():
+        return
+    t = np.clip(d / lay["r"], 0.0, 1.0)
+    a = _shade_alpha(t.ravel(), lay["eps"], lay["tedge"])[:, None]
+    col = _shade_basis(t.ravel(), np.asarray(lay["knots"])) @ lay["col"]
+    sub = cur[y0:y1, x0:x1]
+    cur[y0:y1, x0:x1] = (1.0 - a.reshape(sub.shape[:2] + (1,))) * sub \
+        + a.reshape(sub.shape[:2] + (1,)) * col.reshape(sub.shape[:2] + (3,))
+
+
+def _shade_emit(layers, W, H):
+    """(defs, group) strings for one <radialGradient> + one full-canvas <rect> per layer."""
+    defs = []
+    body = ['<g id="shade">']
+    for i, ly in enumerate(layers):
+        gid = f"shd{i}"
+        stops = []
+        for j, t in enumerate(ly["knots"]):
+            al = _shade_alpha(np.array([t]), ly["eps"], ly["tedge"])[0]
+            c = [int(round(min(255.0, max(0.0, v)))) for v in ly["col"][j]]
+            stops.append(f'<stop offset="{fnum(t, 3)}" stop-color="#{c[0]:02x}{c[1]:02x}{c[2]:02x}" '
+                         f'stop-opacity="{al:.4f}"/>')
+        defs.append(f'<radialGradient id="{gid}" gradientUnits="userSpaceOnUse" '
+                    f'cx="{fnum(ly["cx"])}" cy="{fnum(ly["cy"])}" r="{fnum(ly["r"])}">'
+                    + "".join(stops) + "</radialGradient>")
+        body.append(f'<rect x="0" y="0" width="{fnum(W)}" height="{fnum(H)}" fill="url(#{gid})"/>')
+    body.append("</g>")
+    return defs, "\n".join(body)
+
+
+def build_shade_stack(src255, base_svg, W, H, args, log_fn=None):
+    """Fit the stack on top of `base_svg`; returns (defs, group, stats) or None.
+
+    `base_svg` is the finished artwork *without* the shade group, rendered at the tracing grid so the
+    residual is measured on exactly the pixels this stage will correct.
+    """
+    def _log(msg):
+        if log_fn is not None:
+            log_fn(msg)
+
+    try:
+        import cairosvg
+    except ImportError:
+        _log("      · 未安装 cairosvg, 跳过着色层拟合 (--shade-blobs 需要它来测量底图残差)")
+        return None
+    try:
+        png = cairosvg.svg2png(bytestring=base_svg.encode("utf-8"),
+                               output_width=W, output_height=H)
+        cur = np.asarray(Image.open(io.BytesIO(png)).convert("RGB")).astype(np.float64)
+    except Exception as exc:  # pragma: no cover - renderer/environment dependent
+        _log(f"      · 底图渲染失败, 跳过着色层: {exc}")
+        return None
+    if cur.shape[:2] != (H, W):
+        _log(f"      · 底图尺寸 {cur.shape[1]}x{cur.shape[0]} != 网格 {W}x{H}, 跳过着色层")
+        return None
+
+    src = np.clip(src255, 0.0, 255.0)
+
+    def _psnr(a):
+        mse = float(((a - src) ** 2).mean())
+        return 99.0 if mse <= 0 else 10 * math.log10(255.0 ** 2 / mse)
+
+    psnr0 = _psnr(cur)
+    w = _shade_smooth_weight(src, args.shade_smooth_gtol, args.shade_smooth_ttol)
+    # Only large low-gradient areas take part: small smooth islands are texture, and correcting them
+    # would spend layers on patches far too small to read as flat.
+    lb = measure.label(w > 0.5, connectivity=2)
+    sizes = np.bincount(lb.ravel())
+    keep = [int(k) for k in np.nonzero(sizes >= args.shade_min_area)[0] if int(k) != 0]
+    if not keep:
+        _log("      · 着色层: 没有足够大的平滑区域, 跳过")
+        return None
+    w = w * np.isin(lb, keep)
+    area = int((w > 0.5).sum())
+    rmax = float(args.shade_radius)
+    radii = [rmax * k for k in (0.17, 0.29, 0.46, 0.67, 1.0)]
+    radii = [r for r in radii if r >= 8.0]
+    knots = np.linspace(0.0, 1.0, max(2, int(args.shade_stops)))
+    epss = [float(x) for x in str(args.shade_eps).split(",") if x.strip()]
+    if not epss:
+        epss = [0.35]
+    layers = []
+    t0 = time.time()
+    for _ in range(max(0, int(args.shade_layers))):
+        rule = np.sqrt(((src - cur) ** 2).sum(-1)) * w
+        ys, xs = _shade_candidates(ndi.gaussian_filter(rule, 6.0), int(args.shade_cand),
+                                  4, args.shade_margin)
+        best = None
+        for cy, cx in zip(ys, xs):
+            for r in radii:
+                for eps in epss:
+                    lay = _shade_fit_layer(src, cur, w, cx, cy, r, knots, eps, args.shade_tedge,
+                                           args.shade_non_smooth, args.shade_halo, 0.0)
+                    if lay is None or lay["gain"] < args.shade_gain:
+                        continue
+                    if best is None or lay["red"] > best["red"]:
+                        best = lay
+        if best is None:
+            break
+        _shade_apply(cur, best)
+        layers.append(best)
+    if not layers:
+        _log("      · 着色层: 没有可接受的候选 (底图残差已经是平滑的), 跳过")
+        return None
+    defs, group = _shade_emit(layers, W, H)
+    cov = sum(math.pi * ly["r"] ** 2 for ly in layers) / max(1.0, float(area))
+    stats = {"n": len(layers), "area": area, "cov": cov, "secs": time.time() - t0,
+             "psnr": _psnr(cur), "psnr0": psnr0}
+    return defs, group, stats
+
+
 def build_svg(width, height, regions, stroke_groups, edges, meta, view_box=None,
-              mesh_underlay=True) -> str:
+              shade=None) -> str:
     """width/height = canvas (default display size), view_box = user unit range (the tracing grid).
 
     The two are separate because of --scale: the geometry runs on the enlarged grid, but the default
@@ -2498,20 +2612,10 @@ def build_svg(width, height, regions, stroke_groups, edges, meta, view_box=None,
     for i, r in enumerate(regions):
         if r["bg"]:
             continue
-        if r["grad"] is not None or r.get("mesh") is not None:
+        if r["grad"] is not None:
             gid = f"g{i}"
             g = r["grad"]
-            mesh = r.get("mesh")
-            if g is None:
-                # Mesh with a flat fallback: a two-stop constant linear gradient keeps the fallback
-                # a real paint server (its id is present in <defs>) as an SVG 2 paint list requires.
-                c = to_hex(r["col"])
-                defs.append(
-                    f'<linearGradient id="{gid}" gradientUnits="userSpaceOnUse" '
-                    f'x1="0" y1="0" x2="1" y2="0">'
-                    f'<stop offset="0" stop-color="{c}"/>'
-                    f'<stop offset="1" stop-color="{c}"/></linearGradient>')
-            elif g.get("kind") == "radial":
+            if g.get("kind") == "radial":
                 # Radial fill: center + radius in user units; the stop offsets are already radius
                 # fractions (see _radial_fit), so anything past the last stop is clamped by SVG.
                 defs.append(
@@ -2528,19 +2632,7 @@ def build_svg(width, height, regions, stroke_groups, edges, meta, view_box=None,
                     + "".join(f'<stop offset="{fnum(o,3)}" stop-color="{to_hex(c)}"/>'
                               for o, c in g["stops"])
                     + "</linearGradient>")
-            if mesh is not None:
-                mid = f"mesh{i}"
-                defs.append(_mesh_def(mid, mesh))
-                r["fill"] = f"url(#{mid}) url(#{gid})"
-                r["fallback_fill"] = f"url(#{gid})"
-            else:
-                r["fill"] = f"url(#{gid})"
-        if mesh_underlay and r.get("mesh") is not None:
-            # cairosvg (measured) and mainstream browsers do not implement SVG 2 paint *fallback
-            # lists*: they resolve the first paint server, fail, and paint nothing at all -- so the
-            # region would vanish. Painting the fallback fill underneath makes the region correct
-            # everywhere, while a mesh-capable renderer still draws the mesh on top of it.
-            body.append(f'<path d="{r["d"]}" fill="{r["fallback_fill"]}" fill-rule="evenodd"/>')
+            r["fill"] = f"url(#{gid})"
         body.append(f'<path d="{r["d"]}" fill="{r["fill"]}" fill-rule="evenodd"/>')
     body.append("</g>")
 
@@ -2562,6 +2654,12 @@ def build_svg(width, height, regions, stroke_groups, edges, meta, view_box=None,
             body.append(f'<path d="{d}" stroke="{to_hex(col)}" stroke-width="{fnum(w,2)}" '
                         f'stroke-opacity="{fnum(alpha,3)}"/>')
         body.append("</g>")
+
+    if shade is not None:
+        # Stacked translucent radial gradients (section 3.8): painted last so they correct the final
+        # composite, including whatever the stroke and edge layers added.
+        defs.extend(shade[0])
+        body.append(shade[1])
 
     head = ('<?xml version="1.0" encoding="UTF-8"?>\n'
             f'<svg xmlns="http://www.w3.org/2000/svg" '
@@ -3146,29 +3244,6 @@ def parse_args(argv=None):
     g.add_argument("--dump-refined-labels", default="",
                    help="把细化后的标签图写成 .npy (诊断 / 复现 refine-first 顺序); 空=不写")
 
-    g = p.add_argument_group("网格渐变 (SVG 2 mesh; 默认关闭)")
-    g.add_argument("--grad-mesh", action=argparse.BooleanOptionalAction, default=False,
-                   help="允许把 SVG 2 网格渐变 (Coons patch mesh) 当作大块平滑区域的填充候选: "
-                        "只有残余误差比现有线性/径向按 --grad-mesh-margin 更优时才采用. "
-                        "**兼容性警告**: 网格渐变需要支持 SVG 2 mesh 的渲染器; 主流浏览器"
-                        "(Chrome/Firefox/Safari)与 cairosvg 都不支持, 而且它们也不支持 SVG 2 的 "
-                        "paint 回退列表, 所以只写 fill=\"url(#meshN) url(#gN)\" 时这些渲染器会解析"
-                        "失败而完全不画该区域(实测 cairosvg 输出透明, 不是回退色). 因此默认还会在"
-                        "网格路径下面再画一遍回退填充(--grad-mesh-underlay), 让这些渲染器看到回退"
-                        "渐变; 网格本身默认关闭")
-    g.add_argument("--grad-mesh-margin", type=float, default=0.10,
-                   help="采用网格所需的相对优势: 网格全域 RMS 需比现有填充的 RMS 小这个比例")
-    g.add_argument("--grad-mesh-patches", type=int, default=2,
-                   help="网格每边的 patch 数 (2 → 3x3 个颜色停靠点)")
-    g.add_argument("--grad-mesh-min-area", type=int, default=4000,
-                   help="只对面积不小于该值的区域尝试网格 (小区域单渐变足够)")
-    g.add_argument("--grad-mesh-underlay", action=argparse.BooleanOptionalAction, default=True,
-                   help="在 mesh 路径下面再画一遍回退填充 (默认开). cairosvg/浏览器不支持 SVG 2 的 "
-                        "paint 回退列表, 只写 fill=\"url(#meshN) url(#gN)\" 时它们会解析失败而根本不画"
-                        "该区域(实测 cairosvg 输出透明); 加一层回退路径后这些渲染器能看到回退填充, "
-                        "支持 mesh 的渲染器仍会把网格画在上面. --no-grad-mesh-underlay 只保留 paint "
-                        "回退列表的纯 SVG 2 写法")
-
     g = p.add_argument_group("笔触 (结构张量流线)")
     g.add_argument("--no-strokes", action="store_true",
                    help="只出几何层; --preset logo 默认即开启")
@@ -3202,6 +3277,52 @@ def parse_args(argv=None):
     g.add_argument("--edge-min-area", type=int, default=24)
     g.add_argument("--edge-min-len", type=int, default=8)
     g.add_argument("--edge-tol", type=float, default=0.6, help="骨架路径简化容差")
+
+    g = p.add_argument_group("着色层 (叠加半透明径向渐变 / gradient boosting; 实验性, 默认关闭)")
+    g.add_argument("--shade-blobs", action=argparse.BooleanOptionalAction, default=False,
+                   help="overlay stacked translucent radial gradients to cancel the 1..6/255 steps "
+                        "between neighbouring region fills (the flat polygonal patches / Mach banding "
+                        "that survive even when the pixel error is small). Every layer is a smooth "
+                        "radial colour curve inside a soft disk that may only live in a large "
+                        "low-gradient area; a layer is kept only while it strictly reduces the "
+                        "smooth-weighted residual error of its disk, so the stack is a boosting "
+                        "sequence. Plain SVG 1.1 (radialGradient + stop-opacity), so cairosvg and "
+                        "mainstream browsers paint it identically. Costs one extra cairosvg render "
+                        "plus about 1 s per layer per megapixel (measured: 50 s for 48 layers at "
+                        "1000x1248).")
+    g.add_argument("--shade-layers", type=int, default=48,
+                   help="maximum number of stacked layers (the fit stops early once no candidate can "
+                        "improve the smooth residual any more)")
+    g.add_argument("--shade-radius", type=float, default=0.0,
+                   help="largest disk radius in native px; 0 = auto = 0.19*max(width,height). The five "
+                        "radii tried are 0.17/0.29/0.46/0.67/1.0 of it, and --scale is applied")
+    g.add_argument("--shade-min-area", type=int, default=0,
+                   help="only smooth connected areas of at least this many tracing-grid px^2 are "
+                        "corrected; 0 = auto = (0.05*max(width,height)*--scale)^2")
+    g.add_argument("--shade-eps", default="0.2,0.35,0.5",
+                   help="candidate centre alphas of a disk (stronger alpha attenuates the boundary "
+                        "steps more, but leans harder on the radial colour model)")
+    g.add_argument("--shade-stops", type=int, default=4,
+                   help="colour stops per layer (the radial colour curve is piecewise linear on them)")
+    g.add_argument("--shade-tedge", type=float, default=0.55,
+                   help="radius fraction that still has full alpha; the ramp to 0 runs from there to r")
+    g.add_argument("--shade-smooth-gtol", type=float, default=2.5,
+                   help="gradient magnitude (0..255 per px) at which the smooth weight reaches 0")
+    g.add_argument("--shade-smooth-ttol", type=float, default=2.0,
+                   help="detail energy at which the texture weight reaches 0 (keeps layers off noisy "
+                        "areas)")
+    g.add_argument("--shade-non-smooth", type=float, default=0.35,
+                   help="largest share of non-smooth pixels a disk interior may contain")
+    g.add_argument("--shade-halo", type=float, default=6.0,
+                   help="largest RMS colour move (0..255) a layer may apply to non-smooth pixels "
+                        "inside its disk (halo guard)")
+    g.add_argument("--shade-gain", type=float, default=0.0,
+                   help="minimum relative reduction of a disk's weighted residual error required to "
+                        "keep the layer")
+    g.add_argument("--shade-cand", type=int, default=8,
+                   help="candidate disk centres evaluated per layer")
+    g.add_argument("--shade-margin", type=float, default=28.0,
+                   help="non-maximum-suppression radius between candidate centres, in grid px")
     pre, _ = p.parse_known_args(argv)
     if pre.preset:
         p.set_defaults(**PRESETS[pre.preset])
@@ -3580,19 +3701,6 @@ def main(argv=None):
         if args.dump_refined_labels:
             np.save(args.dump_refined_labels, labels)
 
-    # ---- mesh-gradient candidate (SVG 2 meshgradient; opt-in, see section 3.7) ----
-    if args.grad_mesh:
-        _t_ms = time.time()
-        _ms = apply_mesh_fills(rgb_s, regions, args)
-        _mr0 = _ms["rms0"] / _ms["n"] if _ms["n"] else 0.0
-        _mr1 = _ms["rms1"] / _ms["n"] if _ms["n"] else 0.0
-        log(f"[{el()}] 网格渐变候选: {_ms['n']}/{_ms['tried']} 个大区域采用 mesh "
-            f"(平均 RMS {_mr0:.4f} → {_mr1:.4f}, 最大改善 {_ms['gain_max'] * 100:.1f}%, "
-            f"每边 {args.grad_mesh_patches} patch, 用时 {time.time() - _t_ms:.1f}s)")
-        if args.verbose and _ms["n"]:
-            print("      · 注意: mesh 填充带 paint 回退列表 url(#meshN) url(#gN); "
-                  "cairosvg/主流浏览器不支持 mesh 也不支持回退列表")
-
     # ---- anti-aliasing transition bands: hard edges -> the source image's 2~3px transition (aa_band_regions) ----
     if args.aa_levels > 0 and args.aa_width > 0:
         t_aa = time.time()
@@ -3781,8 +3889,24 @@ def main(argv=None):
             "desc": (f"structure-tensor vector tracing | fine(σd={args.sigma_d},σi={args.sigma_i}) "
                      f"coarse(σd={args.cs_sigma_d},σi={args.cs_sigma_i}) | regions={len(regions)} "
                      f"gradients={n_grad} strokes={n_strokes} edges={len(edges)}")}
-    svg = build_svg(W0, H0, regions, stroke_groups, edges, meta, view_box=(W, H),
-                    mesh_underlay=bool(args.grad_mesh_underlay))
+    svg = build_svg(W0, H0, regions, stroke_groups, edges, meta, view_box=(W, H))
+    sh_stats = None
+    if args.shade_blobs:
+        # Defaults that depend on the picture: a "smooth blob" is a fraction of the canvas, not a
+        # fixed number of pixels, so the radius and the minimum area follow the native size.
+        if args.shade_radius <= 0:
+            args.shade_radius = max(48.0, 0.19 * max(W0, H0) * args.scale)
+        if args.shade_min_area <= 0:
+            args.shade_min_area = max(900, int(round((0.05 * max(W0, H0) * args.scale) ** 2)))
+        _sh = build_shade_stack(rgb255, svg, W, H, args, log)
+        if _sh is not None:
+            svg = build_svg(W0, H0, regions, stroke_groups, edges, meta, view_box=(W, H),
+                            shade=_sh[:2])
+            sh_stats = _sh[2]
+            log(f"[{el()}] 着色层: {sh_stats['n']} 层叠加径向渐变 "
+                f"(平滑区 {sh_stats['area']}px, 盘面积/平滑区 {sh_stats['cov']:.1f}x, "
+                f"底图 {sh_stats['psnr0']:.2f} → 加层后 {sh_stats['psnr']:.2f} dB, "
+                f"用时 {sh_stats['secs']:.1f}s)")
     raw_kb = len(svg.encode()) / 1024
     if args.compress != "off":
         svg = slim_svg(svg, prec_contour=1,
@@ -3857,6 +3981,9 @@ def main(argv=None):
     print(f"  输入   {args.src}  {W0}x{H0}{grid}")
     print(f"  分区   {len(regions)} 区域 · {n_grad} 渐变 · {n_strokes} 笔触 · {len(edges)} 缝线")
     print(f"  矢量   {args.out}  {out_kb:.0f} KB" + (f"   ({psnr:.2f} dB)" if psnr else ""))
+    if sh_stats:
+        print(f"  着色   {sh_stats['n']} 层径向渐变 (平滑区 {sh_stats['area']}px, 覆盖 "
+              f"{sh_stats['cov']:.1f}x)")
     if gz_path:
         print(f"  压缩   {gz_path}  {os.path.getsize(gz_path)/1024:.0f} KB")
     if args.preview and os.path.exists(args.preview):
