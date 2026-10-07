@@ -104,14 +104,34 @@ is for smooth artwork, not for texture-rich photos (see the `--auto-gradient` ro
 ## Directory layout
 
 ```
-SVG_tracer/                (the Python module keeps the name logo_trace.py)
-├── logo_trace.py      main program (single file, 100+ parameters documented in Chinese)
+SVG_tracer/                        (the importable package is svg_tracer/; the CLI entry keeps the
+                                    historical name logo_trace.py, so every documented command works)
+├── logo_trace.py      compatibility shim: `python logo_trace.py ...` -> svg_tracer.cli.main
+├── svg_tracer/        the implementation, split along the pipeline stages
+│   ├── __init__.py    package docstring, thread cap, public re-exports (the old logo_trace.* names)
+│   ├── state.py       runtime knobs shared by every module: --quiet flag, gradient gate, log(), version
+│   ├── _deps.py       third-party imports + the friendly "needs scipy and scikit-image" error
+│   ├── geometry.py    hex colours, fixed-point numbers, bilinear sampling, polyline/Bezier fitting
+│   ├── tensor.py      multi-scale (Di Zenzo) structure tensor
+│   ├── segment.py     k-means colour quantization, RAG merging, partition routing, texture maps
+│   ├── gradient.py    per-region linear/radial gradient fitting + gradient-aware region merging
+│   ├── refine.py      error-driven adaptive refinement
+│   ├── contours.py    mask -> contour -> Douglas-Peucker -> Catmull-Rom/Bezier, subpixel snapping
+│   ├── strokes.py     isophote streamlines / variable-width ribbons
+│   ├── edges.py       fine-scale edge ridges -> skeletonized vector strokes
+│   ├── svg_out.py     anti-aliasing bands, region-adjacency helpers, SVG document assembly
+│   ├── shade.py       stacked translucent radial gradients ("gradient boosting")
+│   ├── gpu.py         GPU backend re-exports (gpu_backend / cuda_backend)
+│   └── cli.py         argparse + presets + the parallel per-region stages + the whole pipeline
 ├── svg_slim.py        slimming kernel (numeric precision trimming / clipPath dedup, standard library only)
 ├── svgzip.py          slimming / compression CLI (same kernel as --compress)
 ├── gpu_backend.py     GPU dispatch layer (prefers cupy, falls back to cuda_backend)
 ├── cuda_backend.py    in-house CUDA structure tensor (on-the-fly nvcc compile + ctypes, no cupy needed)
 ├── build/             the liblogotrace_cuda.so compiled from the module above (auto-generated on first run)
 ├── selfcheck.py       self-check (synthetic small image through the whole pipeline + compression round-trip + path resolution)
+├── tests/             pytest suite: CLI/XML/determinism on 96 px thumbnails, `pytest -m slow` for the md5 anchors
+├── LICENSE            MIT
+├── .github/workflows/ci.yml  CPU-only CI: selfcheck.py + the test suite
 ├── README.md          this file
 ├── docs/
 │   └── experiments.md algorithm details and every ablation experiment (look here to dig deeper)
@@ -119,6 +139,11 @@ SVG_tracer/                (the Python module keeps the name logo_trace.py)
 ├── examples/          the four regenerated example SVGs + RUNLOG.txt (see "Examples")
 └── out/               all artifacts of a normal run: *.svg / *.svgz / *_preview.png / comparison figures
 ```
+
+**Tests**: `python -m pytest -q` runs the fast tier (the documented command lines on 96 px thumbnails,
+XML validity, determinism); `python -m pytest -m slow` adds the full-size byte-identity anchors and
+the self-check, which need the gitignored `inputs/` images. `python selfcheck.py` still runs the
+whole pipeline on a synthetic image on its own.
 
 **Input/output conventions**: passing a bare filename to `--in` (such as `logo.png`) looks it up under
 `inputs/`; when `--out` is omitted the result is written to `out/<input-name>_traced.svg`; previews and
