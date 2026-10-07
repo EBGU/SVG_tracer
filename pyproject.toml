@@ -23,3 +23,9 @@ svg-tracer = "logo_trace:main"
 
 [tool.setuptools]
 py-modules = ["logo_trace", "gpu_backend", "cuda_backend", "svg_slim", "svgzip", "selfcheck"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "slow: full-size byte-identity anchors and the self-check; they need the gitignored inputs/ images",
+]
