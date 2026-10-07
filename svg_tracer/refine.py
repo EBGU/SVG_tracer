@@ -268,7 +268,6 @@ def refine_regions(rgb_s: np.ndarray, tensor: dict, regions: list, args, tf, thr
         return accE / tot, math.sqrt(accR / tot), kids
 
     def visit(r, depth):
-        nonlocal next_id
         if (r.get("aa") or r.get("detail") or int(r["area"]) < min_area
                 or depth >= max_depth or left[0] <= 0):
             return [r]

@@ -427,8 +427,6 @@ def merge_small_regions(labels: np.ndarray, rgb: np.ndarray, min_area: int,
     return inv.reshape(labels.shape).astype(np.int32)
 
 
-
-
 def classify_regions(rgb: np.ndarray, labels: np.ndarray, areas: np.ndarray,
                      tex_sigma: float = 2.5, tex_smooth: float = 6.0,
                      tex_norm: float = 99.5, tex_thr: float = 3.0,

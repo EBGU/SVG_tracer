@@ -15,27 +15,6 @@ from .state import EPS
 # 7. SVG assembly
 # ======================================================================
 
-def neighbor_map(labels: np.ndarray, win: int = 3, band=None) -> np.ndarray:
-    """For each pixel, the "nearest different label" (first occurrence within the window), used to split transition bands by adjacent region.
-
-    Edges are filled in with edge to avoid the false adjacencies that np.roll produces by wrapping
-    around from the opposite side.
-    """
-    H, W = labels.shape
-    pad = np.pad(labels, win, mode="edge")
-    out = np.full(labels.shape, -1, labels.dtype)
-    for dy in range(-win, win + 1):
-        for dx in range(-win, win + 1):
-            if dy == 0 and dx == 0:
-                continue
-            sh = pad[win + dy:win + dy + H, win + dx:win + dx + W]
-            new = (sh != labels) & (out < 0)
-            if band is not None:
-                new &= band
-            out[new] = sh[new]
-    return out
-
-
 def aa_ramp_levels(rgb: np.ndarray, tf: dict, thr: float, W2: float, N: int):
     """Measure the average anti-aliasing transition profile along the source image's boundary normals, then run 1D Lloyd quantization along depth.
 

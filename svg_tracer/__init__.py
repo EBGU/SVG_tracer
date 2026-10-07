@@ -158,7 +158,6 @@ from .svg_out import (  # noqa: F401
     aa_band_regions,
     aa_ramp_levels,
     build_svg,
-    neighbor_map,
 )
 from .tensor import (  # noqa: F401
     structure_tensor,
@@ -232,7 +231,6 @@ __all__ = [
     "mask_to_paths",
     "merge_gradient_regions",
     "merge_small_regions",
-    "neighbor_map",
     "parse_args",
     "poly_area",
     "polyline_to_bezier_d",

@@ -49,7 +49,6 @@ def _ramp_fit(xs, ys, cols, u, n_stops, nb=8):
             "lo": float(lo), "hi": float(hi), "cx": cx, "cy": cy}
 
 
-
 # A radial candidate must remove at least this much MORE of the squared error than the best linear
 # candidate before it is preferred (relative margin on the residual 1-gain). A few percent keeps
 # linear gradients for genuinely linear ramps and switches to radial only for real centre/radius

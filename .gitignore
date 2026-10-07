@@ -20,5 +20,8 @@ inputs/*.jpeg
 !examples/*.svg
 
 # 临时证据/对照图
- tmp/
 tmp/
+
+# 工具产物：pytest 缓存 / editable 安装的 egg-info
+.pytest_cache/
+*.egg-info/

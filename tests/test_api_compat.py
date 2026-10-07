@@ -79,10 +79,11 @@ def test_shared_counters_are_the_same_objects(mods):
 
 
 def test_thread_cap_is_installed_before_numpy():
-    import svg_tracer  # noqa: F401
+    import svg_tracer  # importing the package installs the cap
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                 "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
         assert os.environ.get(var), f"{var} was not set by svg_tracer/__init__.py"
+    assert svg_tracer._THREADS == os.environ.get("LOGO_TRACE_THREADS", "4")
 
 
 def test_parse_args_defaults_and_preset(mods):
@@ -101,9 +102,3 @@ def test_version_flag(mods, capsys):
         logo_trace.parse_args(["--version"])
     assert exc.value.code == 0
     assert "logotrace 1.0.0" in capsys.readouterr().out
-
-
-def test_thread_cap_variable(mods):
-    """The thread cap reads LOGO_TRACE_THREADS and defaults to 4, exactly as before the split."""
-    import svg_tracer
-    assert svg_tracer._THREADS == os.environ.get("LOGO_TRACE_THREADS", "4")
