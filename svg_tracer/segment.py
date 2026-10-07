@@ -33,10 +33,25 @@ def _kmeans(feats: np.ndarray, k: int, iters: int, rng,
     idx = [int(rng.integers(len(sample)))]
     d2 = ((sample - sample[idx[0]]) ** 2).sum(1)
     for _ in range(k - 1):
-        p = d2 / (d2.sum() + EPS)
-        idx.append(int(rng.choice(len(sample), p=p)))
+        mass = d2.sum()
+        if mass <= 0.0:
+            # k-means++ draws the next centroid from d2 / sum(d2): a point that already coincides
+            # exactly with one of the chosen centroids has d2 == 0 and can never be picked. When the
+            # whole residual mass is 0 there is no candidate left, i.e. the image has fewer distinct
+            # colours than the requested k, so seeding would hand numpy an all-zero probability
+            # vector ("Probabilities do not sum to 1"). Stop seeding and keep the centroids that
+            # were actually found -- one per distinct colour, which is exactly what the k-means++
+            # objective asks for on such an input.
+            break
+        # d2 / sum(d2) is the exact k-means++ distribution and always sums to 1 for mass > 0, so the
+        # seeding can never be handed an invalid p. The historical "+ EPS" in the denominator only
+        # guarded against 0/0: it de-normalised p to sum to 1 - EPS/mass, which numpy rejects as soon
+        # as the residual mass is small (below about 1e-4 -- reachable on small canvases, where the
+        # smoothed colours are all nearly identical) even though the mass is strictly positive.
+        idx.append(int(rng.choice(len(sample), p=d2 / mass)))
         d2 = np.minimum(d2, ((sample - sample[idx[-1]]) ** 2).sum(1))
     cen = sample[idx].copy()
+    k = len(cen)                     # < the requested k only for few-colour (degenerate) inputs
 
     if use_gpu:
         try:

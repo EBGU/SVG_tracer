@@ -134,8 +134,9 @@ def examples_md5():
 def _crop_or_synth(src: Path, dst: Path, size: int = THUMB_PX) -> Path:
     """A small whole-image thumbnail of ``src`` (or a synthetic stand-in when it is missing).
 
-    A thumbnail rather than a tile crop: a 96 px crop of a flat logo can be a single colour,
-    and the k-means step has never handled a fully degenerate (one-colour) input.
+    A thumbnail rather than a tile crop: a 96 px crop of a flat logo can be a single colour, which
+    exercises only the degenerate one-region path (see tests/test_degenerate.py) instead of the
+    multi-region behaviour these smoke and determinism tests are meant to cover.
     """
     from PIL import Image
     if src.is_file():

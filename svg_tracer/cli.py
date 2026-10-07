@@ -937,8 +937,6 @@ def main(argv=None):
     border[0, :] = border[-1, :] = border[:, 0] = border[:, -1] = True
     bl = np.bincount(labels[border].ravel(), minlength=n_lab)
     bg_label = int(np.argmax(bl))
-    if labels[1, 1] == bg_label:
-        pass
     bg_mask = labels == bg_label
     bg_col = np.median(rgb_s[bg_mask], axis=0) if bg_mask.any() else np.ones(3)
 
