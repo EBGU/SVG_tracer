@@ -10,7 +10,7 @@ from .geometry import fit_bezier_d, poly_area, polyline_to_bezier_d
 from .state import EPS
 
 # ======================================================================
-# 4. contour -> SVG path
+# contour -> SVG path
 # ======================================================================
 _REFINE_STATS = {"pts": 0, "moved": 0, "sum": 0.0}
 

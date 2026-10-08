@@ -8,7 +8,7 @@ from scipy import ndimage as ndi
 from .state import EPS
 
 # ======================================================================
-# 1. structure tensor
+# structure tensor
 # ======================================================================
 def structure_tensor(rgb: np.ndarray, sigma_d: float, sigma_i: float,
                      color: bool = True) -> dict:

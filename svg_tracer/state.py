@@ -5,9 +5,9 @@ import os
 
 EPS = 1e-12
 
-# Set LOGO_TRACE_REFINE_DEBUG=1 to print every adaptive-refinement candidate and its decision
+# Set SVG_TRACER_REFINE_DEBUG=1 to print every adaptive-refinement candidate and its decision
 # (diagnostic only; it never changes the result).
-_REFINE_DEBUG = os.environ.get("LOGO_TRACE_REFINE_DEBUG", "") == "1"
+_REFINE_DEBUG = os.environ.get("SVG_TRACER_REFINE_DEBUG", "") == "1"
 
 # The defaults are calibrated for this canvas size; smaller images scale the pixel-based parameters down proportionally (see main)
 AUTOSCALE_REF = 1254.0

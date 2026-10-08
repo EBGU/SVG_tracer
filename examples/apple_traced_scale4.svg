@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="250" height="312" viewBox="0 0 1000 1248">
-<title>apple.png · 结构张量描摹 (structure-tensor tracing)</title>
+<title>apple.png · structure tensor tracing</title>
 <desc>structure-tensor vector tracing | fine(σd=1.0,σi=2.5) coarse(σd=2.0,σi=12.0) | regions=383 gradients=151 strokes=0 edges=0</desc>
 <defs>
 <linearGradient id="g1" gradientUnits="userSpaceOnUse" x1="291.7" y1="348" x2="628.9" y2="1059"><stop offset="0.05" stop-color="#e2e5e9"/><stop offset="0.15" stop-color="#dbdfe4"/><stop offset="0.25" stop-color="#ced4db"/><stop offset="0.35" stop-color="#b4bbc6"/><stop offset="0.45" stop-color="#b6bec9"/><stop offset="0.55" stop-color="#b7bfca"/><stop offset="0.65" stop-color="#b8c0cc"/><stop offset="0.75" stop-color="#b5becd"/><stop offset="0.85" stop-color="#b8c1cd"/><stop offset="0.95" stop-color="#c0c3c8"/></linearGradient>

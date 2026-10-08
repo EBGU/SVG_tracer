@@ -1,4 +1,4 @@
-"""SVG_tracer —— bitmap tracing / vectorization (SVG) based on the "multi-scale structure tensor"
+"""SVG_tracer - bitmap tracing / vectorization (SVG) based on the "multi-scale structure tensor"
 
 Core idea
 ---------
@@ -29,18 +29,21 @@ The three-layer structure of the vector output
 
 Usage
 -----
-    python logo_trace.py --in logo.png --out logo_traced.svg \
-        --preview logo_traced_preview.png --debug logo_tensor_debug.png"""
+    python SVG_tracer.py --in inputs/openai.png --out out/openai_traced.svg \
+        --preview out/openai_traced_preview.png --debug out/openai_debug.png
+"""
 
 from __future__ import annotations
 
 import os
+import sys
+import types
 
 # ---- thread cap (must come before "import numpy") ----------------------
 # This script's numeric work is memory-bandwidth bound, while OpenBLAS/OpenMP on large
 # shared nodes threads by core count by default, and thread oversubscription slows down
-# rgb2lab / matrix operations by more than tenfold. Override with LOGO_TRACE_THREADS.
-_THREADS = os.environ.get("LOGO_TRACE_THREADS", "4")
+# rgb2lab / matrix operations by more than tenfold. Override with SVG_TRACER_THREADS.
+_THREADS = os.environ.get("SVG_TRACER_THREADS", "4")
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
            "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
     os.environ.setdefault(_v, _THREADS)
@@ -258,8 +261,31 @@ __all__ = [
 ]
 
 
-def __getattr__(name):
-    """PEP 562: expose the runtime-mutable knobs (GRAD_MIN_GAIN, _QUIET) live."""
-    if name in ("GRAD_MIN_GAIN", "_QUIET"):
-        return getattr(state, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# ----------------------------------------------------------------------
+# Live view of the runtime knobs
+# ----------------------------------------------------------------------
+# GRAD_MIN_GAIN and _QUIET (see state.py) are rebound at runtime -- by --grad-min-gain /
+# --auto-gradient and by --quiet -- while several modules import them once at import time. The
+# package therefore does not expose copies of those two names: reads and writes are routed to
+# state, so ``svg_tracer.GRAD_MIN_GAIN = x`` and ``state.GRAD_MIN_GAIN = x`` are the same object
+# seen from two directions.
+_KNOWNS = ("GRAD_MIN_GAIN", "_QUIET")
+
+
+class _LiveKnobsModule(types.ModuleType):
+    """Module type that forwards the two runtime knobs to :mod:`svg_tracer.state`."""
+
+    def __getattr__(self, name):
+        if name in _KNOWNS:
+            return getattr(state, name)
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    def __setattr__(self, name, value):
+        # `state` is always bound by the time the module class is swapped in (end of this file).
+        if name in _KNOWNS:
+            setattr(state, name, value)
+            return
+        super().__setattr__(name, value)
+
+
+sys.modules[__name__].__class__ = _LiveKnobsModule

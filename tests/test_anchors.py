@@ -5,7 +5,7 @@ command line, the recorded md5, nothing normalised.  One full-size run per ancho
 the byte-identity (b/e) and the well-formed-XML (d) requirement; the module is marked ``slow``
 because those runs take about 65/20/8/170 seconds.
 
-The anchors need the gitignored images under ``inputs/`` and skip loudly when those are
+The anchors need the images under ``inputs/`` and skip loudly when those are
 absent -- the md5s of the committed ``examples/*.svg`` are checked without any inputs in
 ``test_repository.py``, so a checkout without inputs still guards the shipped artifacts.
 """
@@ -28,7 +28,7 @@ def test_anchor_md5_and_xml(trace, require_inputs, md5file, anchor, tmp_path):
     assert got == anchor["md5"], (
         f"{anchor['name']}: output is not byte-identical\n"
         f"  expected {anchor['md5']}\n  got      {got}\n"
-        f"  command  python logo_trace.py {' '.join(map(str, anchor['args']))}")
+        f"  command  python SVG_tracer.py {' '.join(map(str, anchor['args']))}")
 
     text = out.read_text(encoding="utf-8")
     root = ET.fromstring(text)               # raises on malformed XML

@@ -15,7 +15,7 @@ from . import gpu
 from .state import EPS, log
 
 # ======================================================================
-# 2. region segmentation
+# region segmentation
 # ======================================================================
 def _kmeans(feats: np.ndarray, k: int, iters: int, rng,
             fit_sample: int = 150000, chunk: int = 200000, use_gpu: bool = False):
@@ -57,7 +57,7 @@ def _kmeans(feats: np.ndarray, k: int, iters: int, rng,
         try:
             return gpu.lloyd(sample, feats, cen, k, iters)
         except Exception as _e:
-            print(f"      ! GPU k-means 失败({_e}), 退回 CPU", file=sys.stderr)
+            print(f"      ! GPU k-means failed ({_e}), falling back to CPU", file=sys.stderr)
 
     def assign(f):
         """Expand (x-c)^2 into gemm form: an order of magnitude faster than broadcast subtraction and lighter on memory."""
@@ -180,9 +180,9 @@ def segment_colors(rgb: np.ndarray, rgb255: np.ndarray, args, rng) -> np.ndarray
                            args.merge_thresh2, 3, args.protect_sat)
     t4 = time.time()
     if args.verbose:
-        log(f"      · k-means(k={args.kmeans_k}) {t1-t:.1f}s → RAG 合并 "
-              f"{t2-t1:.1f}s → 连通域拆分 {t3-t2:.1f}s → 连通域再合并 "
-              f"{t4-t3:.1f}s, {labels.max()+1} 个色块")
+        log(f"      · k-means(k={args.kmeans_k}) {t1-t:.1f}s → RAG merging "
+              f"{t2-t1:.1f}s → connected-component split {t3-t2:.1f}s → connected-component re-merge "
+              f"{t4-t3:.1f}s, {labels.max()+1} color regions")
     return labels
 
 
@@ -211,8 +211,8 @@ def segment_flat(rgb: np.ndarray, rgb255: np.ndarray, args, rng):
     cov = float(hist[peaks].sum() / key.size) if len(peaks) else 0.0
     if len(peaks) < 2 or len(peaks) > 512 or cov < args.flat_cov:
         if args.verbose:
-            log(f"      · 平色快路径不适用: 主色 {len(peaks)} 个, 覆盖率 {cov*100:.1f}% "
-                  f"(需 ≥{args.flat_cov*100:.0f}%), 走完整路线")
+            log(f"      · flat-color fast path not applicable: {len(peaks)} dominant colors, coverage {cov*100:.1f}% "
+                  f"(needs ≥{args.flat_cov*100:.0f}%), taking the full route")
         return None
 
     def bucket_rgb(b):
@@ -248,9 +248,9 @@ def segment_flat(rgb: np.ndarray, rgb255: np.ndarray, args, rng):
                            args.merge_thresh2, 3, args.protect_sat)
     t3 = time.time()
     if args.verbose:
-        log(f"      · 平色快路径: 主色 {len(peaks)} 个(覆盖 {cov*100:.1f}%) → "
-              f"{len(cen)} 种调色板 → LUT {t1-t:.2f}s → 连通域 {t2-t1:.2f}s → "
-              f"RAG 合并 {t3-t2:.2f}s → {labels.max()+1} 个色块")
+        log(f"      · flat-color fast path: {len(peaks)} dominant colors ({cov*100:.1f}% coverage) → "
+              f"{len(cen)} palette colors → LUT {t1-t:.2f}s → connected components {t2-t1:.2f}s → "
+              f"RAG merging {t3-t2:.2f}s → {labels.max()+1} color regions")
     return labels
 
 
@@ -270,8 +270,8 @@ def edge_map(tf: dict, args):
     edge = filters.apply_hysteresis_threshold(thin, lo, hi)
     frac = float(edge.mean())
     if frac <= 0.0 or frac > 0.4:
-        print(f"      ! 警告: 边缘像素占比 {frac*100:.1f}% (阈值 hi={hi:.3g} lo={lo:.3g}) "
-              f"不合理, 请调 --edge-nms-hi/--edge-nms-lo", file=sys.stderr)
+        print(f"      ! warning: edge pixel share {frac*100:.1f}% (thresholds hi={hi:.3g} lo={lo:.3g}) "
+              f"is unreasonable, please tune --edge-nms-hi/--edge-nms-lo", file=sys.stderr)
         if frac <= 0.0:
             edge = thin > hi          # fallback: plain threshold
     return edge, e
@@ -297,12 +297,12 @@ def segment_edges(rgb: np.ndarray, tf: dict, args, rng) -> np.ndarray:
     core = d > args.edge_core
     markers, n_mark = measure.label(core, connectivity=2, return_num=True)
     if n_mark < 2:
-        print(f"      ! 警告: 只找到 {n_mark} 个平坦区种子, 分割会退化成整图一块; "
-              f"请减小 --edge-core 或调 --edge-nms-lo", file=sys.stderr)
+        print(f"      ! warning: only {n_mark} flat-region seeds found, segmentation would degenerate into a single blob over the whole image; "
+              f"please decrease --edge-core or tune --edge-nms-lo", file=sys.stderr)
     labels = watershed(-d, markers).astype(np.int32) - 1
     if args.verbose:
-        log(f"      · 边缘(非极大值抑制+滞后): 边缘像素 {edge.mean()*100:.2f}% → "
-              f"种子 {n_mark} 个 → 分水岭 {time.time()-t:.1f}s")
+        log(f"      · edges (NMS + hysteresis): edge pixels {edge.mean()*100:.2f}% → "
+              f"{n_mark} seeds → watershed {time.time()-t:.1f}s")
     return labels
 
 
@@ -379,12 +379,12 @@ def segment_hybrid(rgb: np.ndarray, rgb255: np.ndarray, tf: dict, args, rng):
         labels = labels_c
     if args.verbose:
         keep = list(np.nonzero(areas >= args.min_area)[0])
-        info = ", ".join(f"#{li}:{'几何' if geo_r[li] else '复杂'}"
-                         f"(纹理{tex_r[li]:.1e}/色跨{rng_r[li]:.3f})" for li in keep)
-        log(f"      · 分区路由: 边缘 {edge.mean()*100:.2f}% | 吸附方式 {args.snap_mode}"
-              f" | 几何区像素 {geo_px.mean()*100:.1f}%"
-              + (f", 边界移动 {n_moved} 像素" if args.snap_mode == "watershed" else ""))
-        print(f"        [{info}] (几何判据: 纹理<{args.tex_thr} 且 色跨<{args.range_thr})"
+        info = ", ".join(f"#{li}:{'geo' if geo_r[li] else 'complex'}"
+                         f"(tex{tex_r[li]:.1e}/spread{rng_r[li]:.3f})" for li in keep)
+        log(f"      · partition routing: edges {edge.mean()*100:.2f}% | snapping mode {args.snap_mode}"
+              f" | geometric-region pixels {geo_px.mean()*100:.1f}%"
+              + (f", boundary moved {n_moved} pixels" if args.snap_mode == "watershed" else ""))
+        print(f"        [{info}] (geometricity criterion: texture<{args.tex_thr} and spread<{args.range_thr})"
               f" | {time.time()-t:.1f}s")
     return labels, geo_px
 

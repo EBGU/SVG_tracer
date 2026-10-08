@@ -19,7 +19,7 @@ Design
   rounds of "assign -> mean -> zero empty clusters -> reassign" run in device memory, and
   only the centroids and the full-image labels are transferred back once at the end.
   Distances are squared Euclidean, **accumulated in double**, with semantics aligned item by
-  item with ``logo_trace._kmeans`` (including zeroing empty-cluster centroids and taking the
+  item with ``SVG_tracer._kmeans`` (including zeroing empty-cluster centroids and taking the
   smallest cluster id on ties).
 * Device buffers are cached and reused by (W,H) / (N,F) capacity, so cudaMalloc is not called
   on every invocation.
@@ -30,7 +30,7 @@ Design
   affect available().
 * Boundary mode = clamp (equivalent to scipy ``mode="nearest"``).
 
-Mathematically equivalent to ``logo_trace.structure_tensor`` (the same kernels and formulas),
+Mathematically equivalent to ``SVG_tracer.structure_tensor`` (the same kernels and formulas),
 with exactly the same keys:
     l1, l2, coh, energy(=l1), luma, gx, gy, tx, ty
 """
@@ -51,8 +51,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _BUILD_DIR = os.path.join(_HERE, "build")
 _SRC_PATH = os.path.join(_BUILD_DIR, "logotrace_cuda.cu")
 _SO_PATH = os.path.join(_BUILD_DIR, "liblogotrace_cuda.so")
-_NVCC = os.environ.get("LOGO_TRACE_NVCC", "/usr/local/cuda/bin/nvcc")
-_ARCH = os.environ.get("LOGO_TRACE_CUDA_ARCH", "sm_89")
+_NVCC = os.environ.get("SVG_TRACER_NVCC", "/usr/local/cuda/bin/nvcc")
+_ARCH = os.environ.get("SVG_TRACER_CUDA_ARCH", "sm_89")
 
 # ----------------------------------------------------------------------
 # CUDA source (written to build/logotrace_cuda.cu, then compiled)
@@ -289,7 +289,7 @@ extern "C" int lt_st_end(void* h_jxx, void* h_jyy, void* h_jxy, int W, int H) {
 // k-means (Lloyd) -- features and initial centroids are uploaded only once, after which
 //   "assign(sample) -> accumulate means -> zero empty clusters -> reassign" runs for iters rounds entirely in device memory,
 //   with no transfer back to the host per round; only the centroids + full-image labels are transferred back once at the end.
-// aligned step by step with the CPU reference in logo_trace._kmeans:
+// aligned step by step with the CPU reference in SVG_tracer._kmeans:
 //   * the initial centroids are passed in from the host (k-means++ runs on the host); the device does not resample and has no randomness
 //   * before entering the loop, sample is assigned once (corresponding to the CPU's lab_sub = assign(sample))
 //   * per-round order: accumulate statistics with the previous round's labels -> compute means -> reassign
@@ -481,7 +481,7 @@ def _kernel(sigma, order: int) -> np.ndarray:
         return phi
     if order == 1:
         return (-x / (float(sigma) * float(sigma))) * phi
-    raise ValueError("order 只支持 0 或 1, 得到 %r" % (order,))
+    raise ValueError("order supports only 0 or 1, got %r" % (order,))
 
 
 # ----------------------------------------------------------------------
@@ -577,7 +577,7 @@ def _compile(nvcc) -> None:
     pr = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
     if pr.returncode != 0:
         _STATE["log"] = ((pr.stderr or "") + (pr.stdout or "")).splitlines()[:20]
-        raise RuntimeError("nvcc 编译失败 rc=%d" % pr.returncode)
+        raise RuntimeError("nvcc compilation failed rc=%d" % pr.returncode)
 
 
 def _bind(lib) -> None:
@@ -625,7 +625,7 @@ def _last_error(lib) -> str:
 
 
 def _np_lloyd_ref(sample, feats, cen, k, iters):
-    """The Lloyd body of ``logo_trace._kmeans`` (float64), used only for the comparison
+    """The Lloyd body of ``SVG_tracer._kmeans`` (float64), used only for the comparison
     self-check.
 
     Line by line it mirrors the CPU version's assign / bincount / zeros_like; the only
@@ -677,7 +677,7 @@ def _self_test(lib) -> None:
         raise RuntimeError("lt_sep_conv rc=%d (%s)" % (rc, _last_error(lib)))
     exp = _np_sep_conv(a, kd1, kd0)
     if not np.allclose(out, exp, atol=1e-5, rtol=1e-5):
-        raise RuntimeError("lt_sep_conv 自检不符 max|d|=%.3g" % np.abs(out - exp).max())
+        raise RuntimeError("lt_sep_conv self-check mismatch max|d|=%.3g" % np.abs(out - exp).max())
 
     # 2) structure-tensor pipeline: jxx/jyy/jxy (multi-channel Di Zenzo)
     img = rng.random((H, W, 3))
@@ -703,7 +703,7 @@ def _self_test(lib) -> None:
     for nm, got, want in (("jxx", gx, jx), ("jyy", gy, jy), ("jxy", gz, jz)):
         d = np.abs(got - want).max()
         if d > 1e-5 * max(1.0, np.abs(want).max()):
-            raise RuntimeError("结构张量自检不符 %s max|d|=%.3g" % (nm, d))
+            raise RuntimeError("structure tensor self-check mismatch %s max|d|=%.3g" % (nm, d))
 
 
 def _km_self_test(lib) -> None:
@@ -727,8 +727,8 @@ def _km_self_test(lib) -> None:
     samp = np.repeat(blobs, 140, 0) + rngk.normal(0.0, 0.4, (kk * 140, ff))
     full = np.repeat(blobs, 300, 0) + rngk.normal(0.0, 0.4, (kk * 300, ff))
     far = np.full(ff, 1000.0)
-    cases = (("常规", blobs.copy()),
-             ("空簇", np.vstack([blobs[:kk - 1], far[None, :]])))
+    cases = (("normal", blobs.copy()),
+             ("empty cluster", np.vstack([blobs[:kk - 1], far[None, :]])))
     for tag, cen0 in cases:
         it_try = 6
         s32 = np.ascontiguousarray(samp, dtype=np.float32)
@@ -738,12 +738,12 @@ def _km_self_test(lib) -> None:
         got_c, got_l = _km_lloyd_raw(lib, s32, f32, c0, kk, it_try)
         nbad = int((ref_l != got_l).sum())
         if nbad:
-            raise RuntimeError("k-means 自检不符 (%s): 划分不一致 %d/%d" % (tag, nbad, len(ref_l)))
+            raise RuntimeError("k-means self-check mismatch (%s): partition differs %d/%d" % (tag, nbad, len(ref_l)))
         dc = float(np.abs(got_c - ref_c).max())
         if dc > 1e-4:
-            raise RuntimeError("k-means 自检不符 (%s): 质心 max|d|=%.3g" % (tag, dc))
+            raise RuntimeError("k-means self-check mismatch (%s): centroid max|d|=%.3g" % (tag, dc))
     if not np.array_equal(got_c[kk - 1], np.zeros(ff)):
-        raise RuntimeError("k-means 自检不符 (空簇): 空簇质心应为全 0, 实得 %r" % (got_c[kk - 1],))
+        raise RuntimeError("k-means self-check mismatch (empty cluster): the empty-cluster centroid should be all 0, got %r" % (got_c[kk - 1],))
 
 
 def _init() -> bool:
@@ -755,7 +755,7 @@ def _init() -> bool:
         try:
             nvcc = _find_nvcc()
             if nvcc is None:
-                raise RuntimeError("找不到可执行的 nvcc (%s)" % _NVCC)
+                raise RuntimeError("no executable nvcc found (%s)" % _NVCC)
             _write_source()
             if not _so_is_fresh():
                 _compile(nvcc)
@@ -811,13 +811,13 @@ def kmeans_available() -> bool:
 
 
 def device_name() -> str:
-    """GPU name; returns '无' when unavailable."""
+    """GPU name; returns 'none' when unavailable."""
     if not available():
-        return "无"
+        return "none"
     try:
         return _LIB.lt_device_name().decode("utf-8", "replace")
     except Exception:                                            # noqa: BLE001
-        return "无"
+        return "none"
 
 
 def last_error() -> str:
@@ -885,7 +885,7 @@ def lloyd(sample: np.ndarray, feats: np.ndarray, cen: np.ndarray, k: int, iters:
     """Lloyd iterations + final full-image assignment, all in device memory (same signature
     and same return value as ``gpu_backend.lloyd``).
 
-    * Semantics match the CPU path of ``logo_trace._kmeans``: the centroids are fitted on
+    * Semantics match the CPU path of ``SVG_tracer._kmeans``: the centroids are fitted on
       ``sample`` (the caller computes the initial centroids with k-means++ and passes them in),
       and ``feats`` is finally assigned once over the whole image.
     * Features (float32) and initial centroids (float64) are uploaded only once at the start and
@@ -893,31 +893,31 @@ def lloyd(sample: np.ndarray, feats: np.ndarray, cen: np.ndarray, k: int, iters:
       accumulated term by term in double; empty-cluster centroids become 0 (same as the CPU's
       zeros_like).
     * Backend unavailable / parameters or device memory over the limit / any runtime failure ->
-      raises RuntimeError, and the caller (``logo_trace._kmeans`` via try/except) silently falls
+      raises RuntimeError, and the caller (``SVG_tracer._kmeans`` via try/except) silently falls
       back to CPU.
 
     Returns ``(cen float64 (k,F), labels int32 (len(feats),))``.
     """
     if not kmeans_available():
-        raise RuntimeError("CUDA k-means 后端不可用: %s" % (_KM_STATE["err"] or "unknown"))
+        raise RuntimeError("the CUDA k-means backend is unavailable: %s" % (_KM_STATE["err"] or "unknown"))
     k = int(k)
     iters = int(iters)
     smp = np.ascontiguousarray(sample, dtype=np.float32)
     fl = np.ascontiguousarray(feats, dtype=np.float32)
     c0 = np.ascontiguousarray(cen, dtype=np.float64)
     if smp.ndim != 2 or fl.ndim != 2 or smp.shape[0] < 1 or fl.shape[0] < 1:
-        raise ValueError("sample/feats 必须是非空的二维数组, 得到 %r / %r" % (smp.shape, fl.shape))
+        raise ValueError("sample/feats must be non-empty 2-D arrays, got %r / %r" % (smp.shape, fl.shape))
     f = int(smp.shape[1])
     if f != int(fl.shape[1]) or c0.shape != (k, f):
-        raise ValueError("列数/质心形状不符: sample%r feats%r cen%r k=%d"
+        raise ValueError("column count / centroid shape mismatch: sample%r feats%r cen%r k=%d"
                          % (smp.shape, fl.shape, c0.shape, k))
     if k < 1 or iters < 0:
-        raise ValueError("k/iters 非法: k=%d iters=%d" % (k, iters))
+        raise ValueError("invalid k/iters: k=%d iters=%d" % (k, iters))
     lim = _km_maxkf()
     if k * (f + 1) > lim:
-        raise ValueError("k*(F+1)=%d 超过设备 shared 上限 %d" % (k * (f + 1), lim))
+        raise ValueError("k*(F+1)=%d exceeds the device shared-memory limit %d" % (k * (f + 1), lim))
     if not (np.isfinite(smp).all() and np.isfinite(c0).all()):
-        raise ValueError("sample/cen 含 NaN/Inf")
+        raise ValueError("sample/cen contains NaN/Inf")
     return _km_lloyd_raw(_LIB, smp, fl, c0, k, iters)
 
 
@@ -941,7 +941,7 @@ def _conv(src32: np.ndarray, W: int, H: int, kx: np.ndarray, ky: np.ndarray) -> 
 
 def _eigen(jxx: np.ndarray, jyy: np.ndarray, jxy: np.ndarray,
            rgb: np.ndarray, eps: float) -> dict:
-    """Eigendecomposition + output dict (corresponds line by line to logo_trace.structure_tensor)."""
+    """Eigendecomposition + output dict (corresponds line by line to SVG_tracer.structure_tensor)."""
     tr = jxx + jyy
     dif = jxx - jyy
     tmp = np.sqrt(dif * dif + 4.0 * jxy * jxy)
@@ -967,7 +967,7 @@ def _eigen(jxx: np.ndarray, jyy: np.ndarray, jxy: np.ndarray,
 
 def structure_tensor(rgb: np.ndarray, sigma_d: float, sigma_i: float,
                      color: bool = True, eps: float = 1e-12) -> dict:
-    """Mathematically equivalent to ``logo_trace.structure_tensor`` (the GPU only performs the
+    """Mathematically equivalent to ``SVG_tracer.structure_tensor`` (the GPU only performs the
     separable convolutions and products).
 
     Parameters
@@ -983,11 +983,11 @@ def structure_tensor(rgb: np.ndarray, sigma_d: float, sigma_i: float,
         l1, l2, coh, energy(=l1), luma, gx, gy, tx, ty
     """
     if not available():
-        raise RuntimeError("CUDA 后端不可用: %s" % (_STATE["err"] or "unknown"))
+        raise RuntimeError("the CUDA backend is unavailable: %s" % (_STATE["err"] or "unknown"))
 
     a = np.asarray(rgb, dtype=np.float64)
     if a.ndim != 3 or a.shape[2] < 3:
-        raise ValueError("rgb 必须是 (H,W,3), 得到 %r" % (a.shape,))
+        raise ValueError("rgb must be (H,W,3), got %r" % (a.shape,))
     H, W = int(a.shape[0]), int(a.shape[1])
     chans = [a[..., 0], a[..., 1], a[..., 2]] if color else [a.mean(axis=2)]
 

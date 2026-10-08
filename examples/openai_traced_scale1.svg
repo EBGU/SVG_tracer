@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="3840" height="2160" viewBox="0 0 3840 2160">
-<title>openai.png · 结构张量描摹 (structure-tensor tracing)</title>
+<title>openai.png · structure tensor tracing</title>
 <desc>structure-tensor vector tracing | fine(σd=1.0,σi=2.5) coarse(σd=2.0,σi=12.0) | regions=31 gradients=0 strokes=0 edges=0</desc>
 <defs>
 

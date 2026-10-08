@@ -216,17 +216,17 @@ def build_shade_stack(src255, base_svg, W, H, args, log_fn=None):
     try:
         import cairosvg
     except ImportError:
-        _log("      · 未安装 cairosvg, 跳过着色层拟合 (--shade-blobs 需要它来测量底图残差)")
+        _log("      · cairosvg is not installed, skipping the shade-layer fit (--shade-blobs needs it to measure the base residual)")
         return None
     try:
         png = cairosvg.svg2png(bytestring=base_svg.encode("utf-8"),
                                output_width=W, output_height=H)
         cur = np.asarray(Image.open(io.BytesIO(png)).convert("RGB")).astype(np.float64)
     except Exception as exc:  # pragma: no cover - renderer/environment dependent
-        _log(f"      · 底图渲染失败, 跳过着色层: {exc}")
+        _log(f"      · base render failed, skipping the shade layers: {exc}")
         return None
     if cur.shape[:2] != (H, W):
-        _log(f"      · 底图尺寸 {cur.shape[1]}x{cur.shape[0]} != 网格 {W}x{H}, 跳过着色层")
+        _log(f"      · base size {cur.shape[1]}x{cur.shape[0]} != grid {W}x{H}, skipping the shade layers")
         return None
 
     src = np.clip(src255, 0.0, 255.0)
@@ -243,7 +243,7 @@ def build_shade_stack(src255, base_svg, W, H, args, log_fn=None):
     sizes = np.bincount(lb.ravel())
     keep = [int(k) for k in np.nonzero(sizes >= args.shade_min_area)[0] if int(k) != 0]
     if not keep:
-        _log("      · 着色层: 没有足够大的平滑区域, 跳过")
+        _log("      · shade layers: no smooth area large enough, skipping")
         return None
     w = w * np.isin(lb, keep)
     area = int((w > 0.5).sum())
@@ -275,7 +275,7 @@ def build_shade_stack(src255, base_svg, W, H, args, log_fn=None):
         _shade_apply(cur, best)
         layers.append(best)
     if not layers:
-        _log("      · 着色层: 没有可接受的候选 (底图残差已经是平滑的), 跳过")
+        _log("      · shade layers: no acceptable candidate (the base residual is already smooth), skipping")
         return None
     defs, group = _shade_emit(layers, W, H)
     cov = sum(math.pi * ly["r"] ** 2 for ly in layers) / max(1.0, float(area))

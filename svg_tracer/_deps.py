@@ -9,4 +9,4 @@ try:
     from skimage.restoration import denoise_bilateral       # noqa: F401
     from skimage.segmentation import find_boundaries        # noqa: F401
 except Exception as exc:  # pragma: no cover - only without scikit-image
-    sys.exit(f"[错误] 需要 scipy 与 scikit-image: {exc}")
+    sys.exit(f"[error] scipy and scikit-image are required: {exc}")

@@ -37,9 +37,9 @@ jobs:
         run: python selfcheck.py
 
       - name: Test suite
-        # The byte-identity anchors need the gitignored inputs/ images and skip loudly without
-        # them; the rest of the suite runs on small crops.  Selfcheck above already covers the
-        # end-to-end pipeline.  Run `pytest -m slow` locally (with inputs/) for the md5 anchors.
+        # The byte-identity anchors need the images under inputs/ and skip loudly without them;
+        # the rest of the suite runs on small crops.  Selfcheck above already covers the
+        # end-to-end pipeline.  Run `pytest -m slow` locally for the full-size md5 anchors.
         run: python -m pytest -q
 
       - name: Console script

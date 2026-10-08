@@ -10,7 +10,7 @@ from .state import EPS, log
 from . import state
 
 # ======================================================================
-# 3. per-region gradient fitting (the structure tensor supplies the gradient axis)
+# per-region gradient fitting (the structure tensor supplies the gradient axis)
 # ======================================================================
 def _ramp_fit(xs, ys, cols, u, n_stops, nb=8):
     """Bin along the unit axis u and take the median color → gradient stops; also reports the flat-color error and the along-axis residual.
@@ -211,8 +211,8 @@ def fit_region_gradient(rgb: np.ndarray, mask: np.ndarray, tensor: dict,
     """Fit a gradient to a region: a linear one by default, plus a radial candidate when allow_radial.
 
     There are two candidate gradient axes; take the one with the better explained variance:
-      (1) color-field PCA / least squares                        —— globally optimal linear direction, never degenerates
-      (2) structure-tensor energy-weighted mean gradient ∇I      —— the physical direction given by local edges
+      (1) color-field PCA / least squares                        - globally optimal linear direction, never degenerates
+      (2) structure-tensor energy-weighted mean gradient ∇I      - the physical direction given by local edges
     When allow_radial is set, the best radial (center + radius) candidate is scored with the same
     error/gain criterion and returned as {"kind": "radial", ...} when its residual beats the linear
     residual by radial_margin (default GRAD_RADIAL_MARGIN); otherwise the linear result is kept.
@@ -421,7 +421,7 @@ def merge_gradient_regions(rgb: np.ndarray, labels: np.ndarray, tensor: dict, ar
             else:
                 rejected.add((a, b))
         if args.verbose and (len(pairs) or acc):
-            log(f"        · 合并第{_p + 1}轮: {len(pairs)} 个邻接对 → {len(acc)} 次合并")
+            log(f"        · merge pass {_p + 1}: {len(pairs)} adjacent pairs → {len(acc)} merges")
         if not acc:
             break
         parent = np.arange(n)

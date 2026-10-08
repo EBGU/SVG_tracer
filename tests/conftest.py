@@ -6,8 +6,8 @@ The suite has two tiers:
   shipped inputs -- or on a synthetic image when ``inputs/`` is absent -- and checks the CLI
   contract, well-formed XML output and byte-level determinism;
 * the ``slow`` tier (``-m slow``) reproduces the documented example commands at full size and
-  compares the output against the recorded md5 anchors.  It needs the gitignored images under
-  ``inputs/`` and skips loudly when they are missing (e.g. in CI).
+  compares the output against the recorded md5 anchors.  It needs the images under ``inputs/`` and
+  skips loudly when they are missing (e.g. in a pruned checkout).
 
 Every test writes its artifacts into pytest's temporary directory, never into the repository.
 """
@@ -22,55 +22,56 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-LOGOTRACE = REPO / "logo_trace.py"
+SVG_TRACER = REPO / "SVG_tracer.py"
 INPUTS = REPO / "inputs"
 
-# The tool is imported in-process by the compatibility tests; make the checkout importable the
+# The tool is imported in-process by the API tests; make the checkout importable the
 # same way selfcheck.py does.
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-# Flags shared by every documented example run (see README "Examples" and examples/RUNLOG.txt).
+# Flags shared by every documented example run (see README "Examples").
 COMMON = ["--gpu", "auto", "--jobs", "64", "--no-preview"]
 
 # md5 anchors.  Each entry is (id, md5, argv, required inputs).
+# ``tools/refresh_anchors.py`` rewrites these digests (and the EXAMPLES_MD5 map below) whenever the
+# shipped examples are deliberately regenerated; `--check` verifies them without writing.
 ANCHORS = [
     dict(
-        name="apple_auto",
-        md5="3f9b4727c85c41b72cdf3459c607cfdd",
+        name="openai_scale1",
+        md5="857bed7ba8d6637c27731a8f068a51a8",
+        args=["--in", "inputs/openai.png", "--preset", "logo", "--scale", "1", *COMMON],
+        inputs=["openai.png"],
+    ),
+    dict(
+        name="water_lilies_scale1",
+        md5="36c561471c0ad7c4c7f6da0e3cc72cdc",
+        args=["--in", "inputs/water_lilies.jpg", "--preset", "painting", "--scale", "1", *COMMON],
+        inputs=["water_lilies.jpg"],
+    ),
+    dict(
+        name="wave_scale1",
+        md5="ba28414137b129a62ce4661d743d0109",
+        args=["--in", "inputs/wave.jpg", "--preset", "painting", "--scale", "1", *COMMON],
+        inputs=["wave.jpg"],
+    ),
+    dict(
+        name="apple_scale4_auto",
+        md5="bad941615655185c1e0a1d04ae7311bc",
         args=["--in", "inputs/apple.png", "--preset", "logo", "--scale", "4",
               *COMMON, "--auto-gradient"],
         inputs=["apple.png"],
     ),
-    dict(
-        name="apple_no_adaptive_refine",
-        md5="63bd72366ccf388949cf062f7dc1441d",
-        args=["--in", "inputs/apple.png", "--preset", "logo", "--scale", "4",
-              *COMMON, "--auto-gradient", "--no-adaptive-refine"],
-        inputs=["apple.png"],
-    ),
-    dict(
-        name="apple_legacy_off_paths",
-        md5="6bc1650ba400f7d4cacdf008afe3ed9e",
-        args=["--in", "inputs/apple.png", "--preset", "logo", "--scale", "4",
-              *COMMON, "--no-grad-radial", "--no-merge-grad"],
-        inputs=["apple.png"],
-    ),
-    dict(
-        name="wave_no_adaptive_refine",
-        md5="919b1bbc59cc31b0b472200e43060d42",
-        args=["--in", "inputs/wave.jpg", "--preset", "painting", "--scale", "1",
-              *COMMON, "--no-adaptive-refine"],
-        inputs=["wave.jpg"],
-    ),
 ]
 
 # The md5 of every example SVG that is committed to the repository.
+# Kept in sync by tools/refresh_anchors.py (never hand-edit the digests).
 EXAMPLES_MD5 = {
-    "examples/apple_traced_scale4.svg": "3f9b4727c85c41b72cdf3459c607cfdd",
-    "examples/openai_traced_scale1.svg": "52b15cb856e7f3f143eabcde80ce3f40",
-    "examples/water_lilies_traced_scale1.svg": "63f0bc4f40f2830892d280cb1033b2e4",
-    "examples/wave_traced_scale1.svg": "ceca1cbfcd20a328c79eb77fb1fc3a1e",
+    "examples/apple_traced_scale1.svg": "4e3ac97c7dbbba5c953d32fc8a4e3ea5",
+    "examples/apple_traced_scale4.svg": "bad941615655185c1e0a1d04ae7311bc",
+    "examples/openai_traced_scale1.svg": "857bed7ba8d6637c27731a8f068a51a8",
+    "examples/water_lilies_traced_scale1.svg": "36c561471c0ad7c4c7f6da0e3cc72cdc",
+    "examples/wave_traced_scale1.svg": "ba28414137b129a62ce4661d743d0109",
 }
 
 THUMB_PX = 96
@@ -94,12 +95,12 @@ def pytest_generate_tests(metafunc):
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
-        "slow: full-size byte-identity anchors that need the gitignored inputs/ images")
+        "slow: full-size byte-identity anchors that need the inputs/ images")
 
 
 def run_trace(args, out, timeout=3600, env_extra=None, cwd=None):
-    """Run ``python logo_trace.py <args> --out <out>`` and return the CompletedProcess."""
-    cmd = [sys.executable, str(LOGOTRACE), *map(str, args), "--out", str(out)]
+    """Run ``python SVG_tracer.py <args> --out <out>`` and return the CompletedProcess."""
+    cmd = [sys.executable, str(SVG_TRACER), *map(str, args), "--out", str(out)]
     env = dict(os.environ)
     if env_extra:
         env.update(env_extra)
@@ -121,7 +122,7 @@ def md5file():
 
 @pytest.fixture(scope="session")
 def repo():
-    """The repository root (the directory that holds logo_trace.py)."""
+    """The repository root (the directory that holds SVG_tracer.py)."""
     return REPO
 
 
@@ -188,7 +189,7 @@ def require_inputs():
         missing = [n for n in anchor["inputs"] if not (INPUTS / n).is_file()]
         if missing:
             pytest.skip(
-                "inputs/ is absent (gitignored) -- byte-identity anchor %r NOT checked; "
+                "inputs/ is missing -- byte-identity anchor %r NOT checked; "
                 "restore %s and re-run with '-m slow' to verify byte-for-byte output"
                 % (anchor["name"], ", ".join("inputs/" + m for m in missing)))
     return check

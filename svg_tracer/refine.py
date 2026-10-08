@@ -280,7 +280,7 @@ def refine_regions(rgb_s: np.ndarray, tensor: dict, regions: list, args, tf, thr
         if err.size == 0 or E <= 0.0 or nbad < min_bad:
             return [r]
         if _REFINE_DEBUG:
-            print(f"        · 细化候选#{r['idx']}{'[bg]' if r.get('bg') else ''} area={r['area']} "
+            print(f"        · refine candidate #{r['idx']}{'[bg]' if r.get('bg') else ''} area={r['area']} "
                   f"rms={rms:.4f} E={E:.2e} nbad={nbad} depth={depth}")
         # zero the rim so the splits follow the *interior* error only
         err_w = np.where(inside, err, 0.0) if inside is not None else err
@@ -295,7 +295,7 @@ def refine_regions(rgb_s: np.ndarray, tensor: dict, regions: list, args, tf, thr
         if not cands:
             stats["rejected"] += 1
             if _REFINE_DEBUG:
-                print("          → 放弃 (无法二分 / 会切出碎片)")
+                print("          → rejected (cannot bisect / would cut off a sliver)")
             return [r]
         name, (newE, new_rms, kids) = min(cands, key=lambda z: (z[1][0], z[1][1]))
         okE = newE <= (1.0 - gain_thr) * E
@@ -303,12 +303,12 @@ def refine_regions(rgb_s: np.ndarray, tensor: dict, regions: list, args, tf, thr
         if not (okE and okR):
             stats["rejected"] += 1
             if _REFINE_DEBUG:
-                print(f"          → 放弃 ({name}: E {E:.2e} → {newE:.2e}, 需 ≤ "
+                print(f"          → rejected ({name}: E {E:.2e} → {newE:.2e}, needs ≤ "
                       f"{(1.0 - gain_thr) * E:.2e}; rms {rms:.4f} → {new_rms:.4f})")
             return [r]
         if _REFINE_DEBUG:
-            print(f"          → 二分[{name}] (E {E:.2e} → {newE:.2e}, rms {rms:.4f} → "
-                  f"{new_rms:.4f}, 子区域 {kids[0]['area']}/{kids[1]['area']} px, 渐变 "
+            print(f"          → bisect[{name}] (E {E:.2e} → {newE:.2e}, rms {rms:.4f} → "
+                  f"{new_rms:.4f}, child areas {kids[0]['area']}/{kids[1]['area']} px, gradient "
                   f"{int(kids[0]['grad'] is not None)}+{int(kids[1]['grad'] is not None)})")
         left[0] -= (len(kids) - 1)
         stats["split"] += 1

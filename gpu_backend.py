@@ -10,8 +10,8 @@ Design principles
    -- on the same 4090 the latter measured faster: at pipeline scale 150k points 99 ms vs
    cupy 118 ms, over the full image 1.5M points 128 ms vs 163 ms (pure Lloyd body 43 ms vs
    92 ms); each serves as the other's fallback, and with neither it falls back to numpy.
-   The same logo_trace.py therefore runs in both the logotrace (pure CPU) and
-   logotrace-gpu (with cupy) environments, with no branching code.
+   The same SVG_tracer.py therefore runs in both the SVG_tracer (pure CPU) and
+   SVG_tracer-gpu (with cupy) environments, with no branching code.
 2. **Arrays stay in device memory**: each stage does H2D / D2H only once at its start and
    end. On this machine the GPU link measured H2D 7.2 GB/s / D2H 6.0 GB/s in a quiet
    window (under heavy load the same link is an order of magnitude slower); "one transfer
@@ -39,11 +39,11 @@ _CUDATRIED = False
 
 
 def _cupy():
-    """Lazily import cupy (cached); LOGO_TRACE_GPU=0 forces it off."""
+    """Lazily import cupy (cached); SVG_TRACER_GPU=0 forces it off."""
     global _CUPY, _TRIED
     if not _TRIED:
         _TRIED = True
-        if os.environ.get("LOGO_TRACE_GPU", "1") not in ("0", ""):
+        if os.environ.get("SVG_TRACER_GPU", "1") not in ("0", ""):
             try:
                 import cupy
                 cupy.zeros(1, dtype=cupy.float32)      # really initialize the context
@@ -58,7 +58,7 @@ def _cuda():
     global _CUDA, _CUDATRIED
     if not _CUDATRIED:
         _CUDATRIED = True
-        if os.environ.get("LOGO_TRACE_GPU", "1") not in ("0", ""):
+        if os.environ.get("SVG_TRACER_GPU", "1") not in ("0", ""):
             try:
                 import cuda_backend
                 _CUDA = cuda_backend if cuda_backend.available() else None
@@ -98,7 +98,7 @@ def enabled(args) -> bool:
     if mode == "off":
         return False
     if mode == "on" and not available():
-        raise RuntimeError("--gpu on 但 cupy 不可用 (请用 logotrace-gpu 环境, 或设 --gpu auto)")
+        raise RuntimeError("--gpu on but cupy is unavailable (use the SVG_tracer-gpu environment, or set --gpu auto)")
     return available()
 
 
@@ -106,7 +106,7 @@ def device_name() -> str:
     cp = _cupy()
     if cp is None:
         cd = _cuda()
-        return f"{cd.device_name()} (自研 CUDA)" if cd is not None else "无"
+        return f"{cd.device_name()} (in-house CUDA)" if cd is not None else "none"
     try:
         dev = cp.cuda.Device()
         p = cp.cuda.runtime.getDeviceProperties(dev.id)
@@ -119,7 +119,7 @@ def device_name() -> str:
 def structure_tensor(rgb: np.ndarray, sigma_d: float, sigma_i: float,
                      color: bool = True, eps: float = 1e-12,
                      dtype=None) -> dict:
-    """Mathematically equivalent to logo_trace.structure_tensor; returns float64.
+    """Mathematically equivalent to SVG_tracer.structure_tensor; returns float64.
 
     The cupy path keeps float32 (it is only a fallback nowadays). Note that it is not worse
     than float64 -- after switching to f64, logo actually dropped from 37.62 to 37.40 dB,
@@ -141,7 +141,7 @@ def structure_tensor(rgb: np.ndarray, sigma_d: float, sigma_i: float,
         return _c.structure_tensor(rgb, sigma_d, sigma_i, color=color, eps=eps)
     cp = _cupy()
     if cp is None:
-        raise RuntimeError("结构张量: 自研 CUDA 后端(nvcc)与 cupy 都不可用")
+        raise RuntimeError("structure tensor: neither the in-house CUDA backend (nvcc) nor cupy is available")
     from cupyx.scipy import ndimage as cndi
 
     cd = cp.float32 if dtype is not np.float64 else cp.float64
@@ -202,7 +202,7 @@ def lloyd(sample: np.ndarray, feats: np.ndarray, cen: np.ndarray,
     163 ms), and its inertia relative difference against the CPU reference implementation is
     smaller (order 1e-12 vs cupy's 1e-10). When the in-house kernel is unavailable or raises,
     it falls back to cupy; only when both are unavailable does it raise, letting the caller
-    (logo_trace._kmeans via try/except) fall back to CPU.
+    (SVG_tracer._kmeans via try/except) fall back to CPU.
     """
     cd = _cuda()
     if cd is not None and callable(getattr(cd, "lloyd", None)):
@@ -218,7 +218,7 @@ def lloyd(sample: np.ndarray, feats: np.ndarray, cen: np.ndarray,
                 pass                    # fall back to cupy if the in-house kernel misbehaves
     cp = _cupy()
     if cp is None:
-        raise RuntimeError("k-means 的 GPU 后端不可用 (cupy 与自研 CUDA 均不可用)")
+        raise RuntimeError("the GPU backend for k-means is unavailable (neither cupy nor the in-house CUDA backend is available)")
 
     ss = cp.asarray(sample, dtype=cp.float32)
     cc = cp.asarray(cen, dtype=cp.float32)

@@ -8,7 +8,7 @@ import numpy as np
 from .geometry import bilin, polyline_to_bezier_d
 
 # ======================================================================
-# 5. strokes: isophote streamlines (evenly spaced streamlines)
+# strokes: isophote streamlines (evenly spaced streamlines)
 # ======================================================================
 def trace_streamline(x, y, sgn, h, max_steps, coh, tx, ty, mask, occ,
                      coh_min, cos_max_turn):

@@ -1,4 +1,4 @@
-"""Packaging: the split package and the documented console script must stay installable.
+"""Packaging: the program, the split package and the console script must stay installable.
 
 Added together with the ``pyproject.toml`` release-hygiene change, so a source checkout whose
 tests pass also has a correct package/entry-point declaration.
@@ -7,6 +7,10 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
+
+# Every top-level module the distribution installs.
+PY_MODULES = ["SVG_tracer", "gpu_backend", "cuda_backend", "svg_slim", "svgzip", "selfcheck"]
 
 
 def _pyproject(repo) -> str:
@@ -17,13 +21,13 @@ def test_package_and_modules_declared(repo):
     text = _pyproject(repo)
     assert re.search(r'packages\s*=\s*\[\s*"svg_tracer"\s*\]', text), \
         "the svg_tracer package is not declared in [tool.setuptools]"
-    for module in ("logo_trace", "gpu_backend", "cuda_backend", "svg_slim", "svgzip", "selfcheck"):
+    for module in PY_MODULES:
         assert re.search(r'"%s"' % module, text), f"{module} is no longer installed"
 
 
 def test_console_script_and_runtime_dependencies_declared(repo):
     text = _pyproject(repo)
-    assert re.search(r'svg-tracer\s*=\s*"logo_trace:main"', text), "the console script changed"
+    assert re.search(r'svg-tracer\s*=\s*"svg_tracer\.cli:main"', text), "the console script changed"
     deps = re.search(r"dependencies\s*=\s*\[(.*?)\]", text, re.S)
     assert deps, "no runtime dependencies declared"
     for dep in ("numpy", "scipy", "scikit-image", "Pillow"):
@@ -40,6 +44,14 @@ def test_license_file_matches_pyproject(repo):
     assert "WITHOUT WARRANTY OF ANY KIND" in body
 
 
+def test_program_runs_from_a_source_checkout(repo):
+    """`python SVG_tracer.py --version` works without installing anything."""
+    r = subprocess.run([sys.executable, "SVG_tracer.py", "--version"], cwd=str(repo), timeout=300,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+    assert r.stdout.strip() == "SVG_tracer 1.0.0"
+
+
 def test_console_script_runs_when_installed(repo):
     """`svg-tracer --version` works when the project is installed (skipped otherwise)."""
     try:
@@ -49,4 +61,4 @@ def test_console_script_runs_when_installed(repo):
         import pytest
         pytest.skip("svg-tracer is not installed in this environment (pip install -e .)")
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == "logotrace 1.0.0"
+    assert r.stdout.strip() == "SVG_tracer 1.0.0"

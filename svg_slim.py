@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""svg_slim.py —— slimming kernel for vector-tracing output
-(shared by logo_trace.py and svgzip.py, standard library only)
+"""svg_slim.py - slimming kernel for vector-tracing output
+(shared by SVG_tracer.py and svgzip.py, standard library only)
 
 Two levers:
 

@@ -11,12 +11,12 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-# (id, input, extra argv) -- the four example commands from README "Examples".
+# (id, input, extra argv) -- the example commands from README "Examples".
 EXAMPLE_COMMANDS = [
-    ("apple", "apple.png", ["--preset", "logo", "--scale", "4", "--auto-gradient"]),
     ("openai", "openai.png", ["--preset", "logo", "--scale", "1"]),
     ("water_lilies", "water_lilies.jpg", ["--preset", "painting", "--scale", "1"]),
     ("wave", "wave.jpg", ["--preset", "painting", "--scale", "1"]),
+    ("apple", "apple.png", ["--preset", "logo", "--scale", "4", "--auto-gradient"]),
 ]
 
 # Other command lines documented in README "Common recipes" / "Presets".
@@ -82,7 +82,7 @@ def test_quiet_run_prints_no_progress(trace, small_image, tmp_path):
     r = trace(["--in", img, "--gpu", "auto", "--jobs", "1", "--no-preview", "--quiet",
                "--preset", "logo", "--scale", "1"], out)
     assert r.returncode == 0, r.stderr[-3000:]
-    assert "结构张量" not in r.stdout          # progress lines are gated by log()
+    assert "structure tensor" not in r.stdout    # progress lines are gated by log()
     _check_svg(out)
 
 
@@ -99,4 +99,4 @@ def test_svgz_matches_svg(trace, small_image, tmp_path):
 def test_missing_input_fails_cleanly(trace, tmp_path):
     r = trace(["--in", tmp_path / "nope.png", "--no-preview"], tmp_path / "x.svg")
     assert r.returncode != 0
-    assert "找不到输入文件" in (r.stderr + r.stdout)
+    assert "not found" in (r.stderr + r.stdout).lower()

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="3859" height="2594" viewBox="0 0 3859 2594">
-<title>wave.jpg · 结构张量描摹 (structure-tensor tracing)</title>
+<title>wave.jpg · structure tensor tracing</title>
 <desc>structure-tensor vector tracing | fine(σd=1.0,σi=2.5) coarse(σd=2.0,σi=12.0) | regions=3453 gradients=2201 strokes=34799 edges=0</desc>
 <defs>
 <linearGradient id="g2" gradientUnits="userSpaceOnUse" x1="3403.9" y1="277.4" x2="2304.7" y2="684.8"><stop offset="0.042" stop-color="#fbeecc"/><stop offset="0.125" stop-color="#fceecc"/><stop offset="0.208" stop-color="#fcefcd"/><stop offset="0.292" stop-color="#fbf0d1"/><stop offset="0.375" stop-color="#fbf3dc"/><stop offset="0.458" stop-color="#fcf5e1"/><stop offset="0.542" stop-color="#fcf6e3"/><stop offset="0.625" stop-color="#fcf6e2"/><stop offset="0.708" stop-color="#fcf5e2"/><stop offset="0.792" stop-color="#fbf4e1"/><stop offset="0.875" stop-color="#fbf5e1"/><stop offset="0.958" stop-color="#fcf5e1"/></linearGradient>

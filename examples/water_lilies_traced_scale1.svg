@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1511" height="1600" viewBox="0 0 1511 1600">
-<title>water_lilies.jpg · 结构张量描摹 (structure-tensor tracing)</title>
+<title>water_lilies.jpg · structure tensor tracing</title>
 <desc>structure-tensor vector tracing | fine(σd=1.0,σi=2.5) coarse(σd=2.0,σi=12.0) | regions=1169 gradients=1077 strokes=9812 edges=0</desc>
 <defs>
 <linearGradient id="g0" gradientUnits="userSpaceOnUse" x1="984.3" y1="931.6" x2="1464.3" y2="1423.6"><stop offset="0.042" stop-color="#5c84ac"/><stop offset="0.125" stop-color="#5784a9"/><stop offset="0.208" stop-color="#4f83aa"/><stop offset="0.292" stop-color="#4985ae"/><stop offset="0.375" stop-color="#4784ae"/><stop offset="0.458" stop-color="#4a84ac"/><stop offset="0.542" stop-color="#4c81a9"/><stop offset="0.625" stop-color="#487fa8"/><stop offset="0.708" stop-color="#4a81a8"/><stop offset="0.792" stop-color="#4c82a9"/><stop offset="0.875" stop-color="#447ea5"/><stop offset="0.958" stop-color="#457ca3"/></linearGradient>

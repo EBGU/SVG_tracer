@@ -22,18 +22,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# render-back verification: preview images, `svgzip.py --ref` PSNR checks and selfcheck.py's
+# compression round-trip all need an SVG rasterizer
+render = ["cairosvg"]
 gpu = ["cupy-cuda12x"]
 
 [project.scripts]
-svg-tracer = "logo_trace:main"
+svg-tracer = "svg_tracer.cli:main"
 
 [tool.setuptools]
-# the split package, plus the compatibility shim and the standalone helper modules
-py-modules = ["logo_trace", "gpu_backend", "cuda_backend", "svg_slim", "svgzip", "selfcheck"]
+# the split package, the program entry point and the standalone helper modules
+py-modules = ["SVG_tracer", "gpu_backend", "cuda_backend", "svg_slim", "svgzip", "selfcheck"]
 packages = ["svg_tracer"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-  "slow: full-size byte-identity anchors and the self-check; they need the gitignored inputs/ images",
+  "slow: full-size byte-identity anchors and the self-check; they need the inputs/ images",
 ]

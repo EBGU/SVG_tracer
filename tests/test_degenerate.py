@@ -21,8 +21,8 @@ one centroid per distinct colour.  A second, unrelated pre-existing bug tripped 
 shorter than 2 px: the dead ``if labels[1, 1] == bg_label: pass`` in the background detection, which
 is gone.
 
-The inputs are generated into ``tmp_path``, so this file needs nothing from the gitignored
-``inputs/`` and stays in the fast tier.
+The inputs are generated into ``tmp_path``, so this file needs nothing from ``inputs/`` and stays in
+the fast tier.
 """
 from __future__ import annotations
 

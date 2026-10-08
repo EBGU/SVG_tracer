@@ -1,4 +1,4 @@
-# 生成物与大文件一律不入库
+# Generated artifacts: never commit them (the repository ships SVG examples only)
 out/
 output/
 bench_out/
@@ -7,21 +7,16 @@ __pycache__/
 *.pyc
 *.log
 
-# 原始输入图（体积大）
-inputs/*.png
-inputs/*.jpg
-inputs/*.jpeg
-
-# 压缩容器不入库（仓库只留纯 SVG）
+# Compressed containers are not committed either (the repository keeps plain SVG only)
 *.svgz
 
-# 默认排除 SVG，但放行 examples/ 下的示例
+# Exclude SVG by default, but let the examples/ directory through
 *.svg
 !examples/*.svg
 
-# 临时证据/对照图
+# Scratch evidence / comparison images
 tmp/
 
-# 工具产物：pytest 缓存 / editable 安装的 egg-info
+# Tooling artifacts: pytest cache and the egg-info of an editable install
 .pytest_cache/
 *.egg-info/

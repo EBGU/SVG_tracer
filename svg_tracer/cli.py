@@ -35,28 +35,31 @@ from .tensor import structure_tensor
 from . import state
 
 EXAMPLES = """\
-示例
-----
-  # 硬边平面图（logo / 图标 / 插画）：2 倍网格 + 亚像素定位 + 保角贝塞尔，一行搞定
-  python logo_trace.py --in logo.png --preset logo
+Examples
+--------
+  # Hard-edged flat artwork (logo / icon / illustration): 2x grid + subpixel localization + conformal Bezier, done in one line
+  python SVG_tracer.py --in openai.png --preset logo
 
-  # 写意绘画 / 照片：细节预设（色块小而多、笔触密而细）
-  python logo_trace.py --in water-lilies-29.jpg --preset painting
+  # Freehand painting / photo: detail preset (many small color regions, dense fine strokes)
+  python SVG_tracer.py --in water_lilies.jpg --preset painting
 
-  # 只要几何层（不要笔触）并顺带出 .svgz
-  python logo_trace.py --in logo.png --preset logo --no-strokes --gzip
+  # Only the geometric layer (no strokes), plus a .svgz on the side
+  python SVG_tracer.py --in apple.png --preset logo --no-strokes --gzip
 
-  # 追高保真：4 倍网格（5016²，约 20 分钟）
-  python logo_trace.py --in logo.png --preset logo --scale 4 --compress slim --gzip
+  # Smooth/glossy artwork: turn the gradient gate down automatically (expect banding)
+  python SVG_tracer.py --in apple.png --preset logo --auto-gradient
 
-  # 自检：合成小图跑通全流程并断言质量
+  # Chasing high fidelity: 4x grid on a large canvas (about 20 minutes)
+  python SVG_tracer.py --in openai.png --preset logo --scale 4 --compress slim --gzip
+
+  # Self-check: run the whole pipeline on a small synthetic image and assert the quality
   python selfcheck.py
 
-输入默认为 inputs/<名>，输出默认写到 out/；裸文件名会自动到 inputs/ 下找。
+Input defaults to inputs/<name>, output defaults to out/; a bare filename is looked up under inputs/.
 """
 
 # ======================================================================
-# 8. main pipeline
+# main pipeline
 # ======================================================================
 # Presets: parameter combinations for different art styles (explicit command-line arguments win over presets)
 PRESETS = {
@@ -257,9 +260,9 @@ def _par_region_one(li):
                                radial_margin=args.grad_radial_margin)
     msg = ""
     if args.verbose:
-        q = f"{grad['quality']:.2f}({grad['axis']})" if grad else "平色"
-        msg = (f"      · 区域#{li:<2d} area={int(areas[li]):>7d} {to_hex(col)} "
-               f"渐变质量={q} 拟合={use_fit}(几何度{geo_frac:.2f})")
+        q = f"{grad['quality']:.2f}({grad['axis']})" if grad else "flat"
+        msg = (f"      · region #{li:<2d} area={int(areas[li]):>7d} {to_hex(col)} "
+               f"gradient quality={q} fit={use_fit}(geometricity {geo_frac:.2f})")
     return ({"idx": li, "mask": mask, "area": int(areas[li]), "d": d,
              "fill": to_hex(col), "grad": grad, "bg": False,
              "geo": geo_frac, "fit": use_fit, "win": win, "off": (y0, x0), "col": col},
@@ -333,11 +336,11 @@ def _par_detail_one(k):
     # The long tail of the detail layer is "the contour DP of a few very large components": there are very few components, so a line is always reported here
     # (including the component area and the region_path_d time), so the next round can pinpoint which component and how many seconds.
     _dt = time.time() - _t_rp
-    q = f"{grad['quality']:.2f}" if grad else "平色"
-    msg = (f"      · 缝线#{k} area={int(mk.sum()):>7d} 窗口={mk.shape[0]}x{mk.shape[1]} "
-           f"轮廓={_dt:.1f}s {to_hex(col)} 渐变={q}")
+    q = f"{grad['quality']:.2f}" if grad else "flat"
+    msg = (f"      · seam #{k} area={int(mk.sum()):>7d} window={mk.shape[0]}x{mk.shape[1]} "
+           f"contour={_dt:.1f}s {to_hex(col)} gradient={q}")
     if args.verbose:
-        msg += f" (候选分量中第 {k} 个)"
+        msg += f" (candidate component #{k})"
     return ({"idx": f"d{k}", "mask": mk, "area": int(mk.sum()),
              "d": d, "fill": to_hex(col), "grad": grad,
              "bg": False, "detail": True, "win": win, "off": (y0, x0)}, msg)
@@ -386,284 +389,282 @@ def _par_stroke_one(i):
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
-        prog="logo_trace.py",
-        description="基于多尺度结构张量的位图描摹 / 矢量化工具"
-                    "（结构张量 → 分区路由 → SVG）",
+        prog="SVG_tracer.py",
+        description="Bitmap tracing / vectorization tool based on the multi-scale structure tensor"
+                    " (structure tensor → partition routing → SVG)",
         epilog=EXAMPLES, formatter_class=_Fmt)
-    p.add_argument("--version", action="version", version=f"logotrace {__version__}")
+    p.add_argument("--version", action="version", version=f"SVG_tracer {__version__}")
 
-    g = p.add_argument_group("输入输出")
-    g.add_argument("--in", dest="src", default="inputs/logo.png",
-                   help="输入位图; 给裸文件名会自动到 inputs/ 下找")
+    g = p.add_argument_group("input / output")
+    g.add_argument("--in", dest="src", default="inputs/openai.png",
+                   help="input bitmap; a bare filename is looked up under inputs/")
     g.add_argument("--out", default=None,
-                   help="输出 SVG; 默认 out/<输入名>_traced.svg")
+                   help="output SVG; defaults to out/<input name>_traced.svg")
     g.add_argument("--preview", nargs="?", const="auto", default=None,
-                   help="预览 PNG; 不带值=自动命名到 out/")
+                   help="preview PNG; without a value = auto-named under out/")
     g.add_argument("--no-preview", dest="preview", action="store_const", const="",
-                   help="不渲染预览")
+                   help="do not render a preview")
     g.add_argument("--debug", nargs="?", const="auto", default=None,
-                   help="结构张量调试图; 默认不输出, 不带值=自动命名到 out/")
+                   help="structure tensor debug image; off by default, without a value = auto-named under out/")
     g.add_argument("--gzip", action="store_true",
-                   help="同时输出 .svgz (gzip -9; 浏览器 / <img> 可直接用)")
+                   help="also write .svgz (gzip -9; usable directly by browsers / <img>)")
     g.add_argument("--compress", choices=["off", "slim", "tight"], default="slim",
-                   help="SVG 瘦身: off=原样; slim=数字精度裁剪(逐位无损, 可再 gzip); "
-                        "tight=再多删掉重复 clipPath(体积最小, 但笔触会越出所属色块: "
-                        "logo 2 倍实测 -1.9 dB / 4 倍 -5.7 dB, 水彩 -0.01 dB; "
-                        "**--preset painting 默认就是 tight**). "
-                        "硬边图形还想更小, 用 svgzip.py 的 --prec 0(几乎无损, 体积再降约 1/3)")
+                   help="SVG slimming: off=as is; slim=precision trimming (lossless per digit, can still be gzipped); "
+                        "tight=additionally drop duplicate clipPath (smallest, but strokes spill outside their color region: "
+                        "measured -1.9 dB at logo 2x / -5.7 dB at 4x, watercolor -0.01 dB; "
+                        "**--preset painting defaults to tight**). "
+                        "To go even smaller on hard-edged artwork use svgzip.py --prec 0 (nearly lossless, another ~1/3 off)")
 
-    g = p.add_argument_group("运行")
+    g = p.add_argument_group("run")
     g.add_argument("--scale", type=float, default=4.0,
-                   help="描摹前 Lanczos 放大倍数 (硬边图形 2.0 起收益明显)")
+                   help="Lanczos upscale factor before tracing (hard-edged artwork gains clearly from 2.0 up)")
     g.add_argument("--seed", type=int, default=7)
     g.add_argument("--no-autoscale", dest="no_autoscale", action="store_true",
-                   help=f"关掉小图自动缩参 (默认开启: 盘面 < {AUTOSCALE_REF:.0f}px 时按 "
-                        f"k=max(W,H)/{AUTOSCALE_REF:.0f} 缩小 min_area/spacing 等绝对像素参数)")
+                   help=f"turn off parameter auto-scaling for small images (on by default: for a canvas < {AUTOSCALE_REF:.0f}px it scales "
+                        f"absolute pixel parameters such as min_area/spacing by k=max(W,H)/{AUTOSCALE_REF:.0f})")
     g.add_argument("--verbose", dest="verbose", action="store_true", default=True,
                    help=argparse.SUPPRESS)
     g.add_argument("--quiet", dest="verbose", action="store_false",
-                   help="只打印结束摘要")
+                   help="print only the final summary")
 
-    g = p.add_argument_group("预设")
+    g = p.add_argument_group("presets")
     g.add_argument("--preset", choices=sorted(PRESETS), default=None,
-                   help="参数预设 (命令行显式参数优先): "
-                        "logo=硬边平面图(2 倍网格 + 亚像素定位 + 保角贝塞尔); "
-                        "painting=写意/照片(色块小而多、笔触密而细)")
+                   help="parameter preset (explicit command-line arguments win): "
+                        "logo=hard-edged flat artwork (2x grid + subpixel localization + conformal Bezier); "
+                        "painting=freehand/photo (many small color regions, dense fine strokes)")
 
-    g = p.add_argument_group("结构张量")
-    g.add_argument("--sigma-d", type=float, default=1.0, help="细尺度 微分尺度 σd")
-    g.add_argument("--sigma-i", type=float, default=2.5, help="细尺度 积分尺度 σi")
-    g.add_argument("--cs-sigma-d", type=float, default=2.0, help="粗尺度 σd (笔触流场)")
-    g.add_argument("--cs-sigma-i", type=float, default=12.0, help="粗尺度 σi (笔触流场)")
+    g = p.add_argument_group("structure tensor")
+    g.add_argument("--sigma-d", type=float, default=1.0, help="fine scale differentiation scale σd")
+    g.add_argument("--sigma-i", type=float, default=2.5, help="fine scale integration scale σi")
+    g.add_argument("--cs-sigma-d", type=float, default=2.0, help="coarse scale σd (stroke flow field)")
+    g.add_argument("--cs-sigma-i", type=float, default=12.0, help="coarse scale σi (stroke flow field)")
 
-    g = p.add_argument_group("分割")
+    g = p.add_argument_group("segmentation")
     g.add_argument("--method", choices=["colors", "edges", "hybrid", "watershed"],
                    default="hybrid",
-                   help="hybrid=分区路由(默认): 颜色分割定区域身份, 纯色几何区把边界亚像素"
-                        "吸附到边缘并走保角贝塞尔, 笔触/渐变复杂区走原来的做法; "
-                        "colors=纯颜色分割(Catmull-Rom); edges=纯边缘检测分水岭; "
-                        "watershed=能量分水岭")
+                   help="hybrid=partition routing (default): color segmentation fixes the region identity, solid-color geometric regions "
+                        "snap their boundary subpixel onto edges and use conformal Beziers, stroke/gradient complex regions keep the original approach; "
+                        "colors=pure color segmentation (Catmull-Rom); edges=pure edge-detection watershed; "
+                        "watershed=energy watershed")
     g.add_argument("--labels-cache", default="",
-                   help="分割结果缓存文件 (.npy): 存在则载入, 否则算完保存; 空=不用")
+                   help="segmentation cache file (.npy): load it when present, otherwise save after computing; empty=off")
     g.add_argument("--gpu", choices=["off", "auto", "on"], default="auto",
-                   help="结构张量+k-means 是否上 GPU(默认 auto)。auto=可用就用(cupy 或自研 "
-                        "CUDA 后端 cuda_backend.py), 没有就静默退回 CPU; off=只用 CPU; "
-                        "auto=可用就用(自研 CUDA 后端 cuda_backend.py, 或 cupy), 否则静默"
-                        "退回 CPU; on=必须有 GPU。实测: 张量阶段 1.7~2.6×, 端到端因 float32 "
-                        "张量变成 37.54 dB (CPU 37.57), 且大图上收益更明显")
+                   help="whether the structure tensor + k-means go on the GPU (default auto). auto=use it when available (cupy or the in-house "
+                        "CUDA backend cuda_backend.py), otherwise silently fall back to CPU; off=CPU only; "
+                        "on=GPU required. Measured: tensor stage 1.7~2.6x, end to end the float32 "
+                        "tensor costs 37.54 dB (CPU 37.57), and the gain is larger on big images")
     g.add_argument("--jobs", type=int, default=0,
-                   help="逐区域阶段的并行进程数 (fork + 写时复制, 大数组不拷贝、不 pickle)。"
-                        "0=自动: min(核数,16), 候选区域少于 24 个时用 1; 1=关闭并行。"
-                        "无 rng 的环节(区域矢量/活动度/细节层)并行后输出逐字节不变; "
-                        "笔触层并行时改用每区域确定性种子, 所以 --jobs 1 才是与 out/ "
-                        "逐字节相同的口径")
+                   help="number of parallel processes for the per-region stage (fork + copy-on-write, large arrays are neither copied nor pickled)."
+                        "0=auto: min(cores,16), 1 when there are fewer than 24 candidate regions; 1=parallelism off."
+                        "The stages without rng (region geometry/activity/detail layer) produce byte-identical output when parallel; "
+                        "the stroke layer switches to a per-region deterministic seed, so --jobs 1 is the setting that matches "
+                        "out/ byte for byte")
     g.add_argument("--batch-book", choices=("auto", "off"), default="auto",
-                   help="逐区域阶段的规则密集子步骤(掩码腐蚀 / 逐区域中位色)改成整图批量: "
-                        "auto=能算就算(GPU 上优先 cupy), off=沿用逐区域循环。批量版与"
-                        "逐区域版逐字节相同(1/255 网格上中位数有闭式解); 图经过重采样"
-                        "(scale != 1)时像素不在该网格上, 自动回退到逐区域。")
+                   help="turn the rule-dense sub-steps of the per-region stage (mask erosion / per-region median color) into one whole-image batch: "
+                        "auto=compute it when possible (cupy preferred on the GPU), off=keep the per-region loop. The batch version is "
+                        "byte-identical to the per-region version (the median has a closed form on the 1/255 grid); when the image was resampled "
+                        "(scale != 1) the pixels are not on that grid and it falls back to per-region automatically.")
     g.add_argument("--seg", choices=["full", "auto", "flat"], default="full",
-                   help="分割路线。full=完整路线(默认, k-means+RAG); auto/flat=平色快路径"
-                        "(直方图主色+LUT+连通域)。实测: 硬边平色图标 27.57→27.37 dB 而分割 "
-                        "9.3→4.1s; 带渐变的 logo 37.57→34.7 dB —— 所以默认不用, 只建议"
-                        "纯硬边平面图显式指定")
+                   help="segmentation route. full=the complete route (default, k-means+RAG); auto/flat=flat-color fast path "
+                        "(histogram dominant colors + LUT + connected components). Measured: a hard-edged flat-color icon 27.57→27.37 dB while segmentation "
+                        "drops 9.3→4.1s; a logo with gradients 37.57→34.7 dB -- so it is off by default and only recommended"
+                        "when explicitly requested for purely hard-edged flat artwork")
     g.add_argument("--flat-cov", type=float, default=0.90,
-                   help="快路径判据: 主色桶需覆盖的像素占比, 低于此值走完整路线")
+                   help="fast-path criterion: pixel share the dominant-color buckets must cover, below which the full route is taken")
     g.add_argument("--flat-nb", type=int, default=5,
-                   help="快路径直方图每通道位数 (5 → 32 级/通道)")
+                   help="fast-path histogram bits per channel (5 → 32 levels/channel)")
     g.add_argument("--flat-share", type=float, default=2e-4,
-                   help="快路径: 一个桶要算作主色的最小像素占比")
+                   help="fast path: minimum pixel share for a bucket to count as a dominant color")
     g.add_argument("--flat-merge", type=float, default=0.0,
-                   help="快路径: 调色板归并的颜色距离阈值 (0-1)")
+                   help="fast path: color distance threshold for palette merging (0-1)")
     g.add_argument("--edge-nms-hi", type=float, default=0.97,
-                   help="edges 方法: 非极大值抑制后的滞后高阈值(能量分位)")
+                   help="edges method: hysteresis high threshold after non-maximum suppression (energy quantile)")
     g.add_argument("--edge-nms-lo", type=float, default=0.92,
-                   help="edges 方法: 滞后低阈值(能量分位)")
+                   help="edges method: hysteresis low threshold (energy quantile)")
     g.add_argument("--edge-core", type=float, default=3.0,
-                   help="edges 方法: 平坦区种子要求的到边缘距离 (px)")
+                   help="edges method: distance to the edge required of a flat-region seed (px)")
     g.add_argument("--edge-close", type=int, default=0,
-                   help="edges 方法: 边缘闭运算次数 (补 1~2px 缺口)")
+                   help="edges method: edge closing iterations (fills 1~2px gaps)")
     g.add_argument("--edge-dsmooth", type=float, default=0.6,
-                   help="edges 方法: 距离场平滑 σ")
+                   help="edges method: distance-field smoothing σ")
     g.add_argument("--kmeans-k", type=int, default=20)
     g.add_argument("--kmeans-iters", type=int, default=16)
-    g.add_argument("--pre-smooth", type=float, default=1.6, help="量化前高斯平滑 σ")
-    g.add_argument("--thresh", type=float, default=12.0, help="RAG 合并阈值 (0-255 色距)")
+    g.add_argument("--pre-smooth", type=float, default=1.6, help="Gaussian smoothing σ before quantization")
+    g.add_argument("--thresh", type=float, default=12.0, help="RAG merging threshold (0-255 color distance)")
     g.add_argument("--merge-thresh2", type=float, default=10.0,
-                   help="连通域层面再次 RAG 合并的阈值 (0=关闭)")
+                   help="threshold for another RAG merging pass at the connected-component level (0=off)")
     g.add_argument("--detail-chroma", type=float, default=12.0,
-                   help="彩色细缝线细节层的 Lab 色度阈值 (0=关闭)")
+                   help="Lab chroma threshold of the colored thin seam-line detail layer (0=off)")
     g.add_argument("--detail-scale", type=float, default=1.0,
-                   help="色度图高斯平滑 σ")
+                   help="chroma map Gaussian smoothing σ")
     g.add_argument("--detail-min-area", type=int, default=40)
     g.add_argument("--protect-sat", type=float, default=0.0,
-                   help="平均饱和度(rgb 极差)高于此值的彩色区域不参与合并/吸收 "
-                        "(0=关闭; 金色缝线已由细节层单独处理)")
+                   help="colored regions whose average saturation (rgb range) exceeds this value take no part in merging/absorption "
+                        "(0=off; golden seam lines are already handled separately by the detail layer)")
     g.add_argument("--merge-passes", type=int, default=4)
     g.add_argument("--min-area", type=int, default=600)
     g.add_argument("--min-width", type=int, default=0,
-                   help="标签开运算核宽(px), 0=关闭; 会压缩细长真实特征, 慎用")
+                   help="label opening kernel width (px), 0=off; it shrinks genuinely thin long features, use with care")
     g.add_argument("--denoise", type=float, default=0.0,
-                   help="保边平滑 sigma_color (0=关闭; 输入有噪声时建议 0.03~0.05)")
+                   help="edge-preserving smoothing sigma_color (0=off; 0.03~0.05 is recommended for noisy input)")
     g.add_argument("--contour-tol", type=float, default=0.75)
     g.add_argument("--contour-smooth", type=float, default=1.0)
     g.add_argument("--fit", choices=["auto", "cr", "bezier"], default="auto",
-                   help="曲线拟合: auto=按区域几何度自动选择(几何区 bezier/复杂区 cr); "
+                   help="curve fitting: auto=choose from the region's geometricity (bezier for geometric regions / cr for complex ones); "
                         "cr=Douglas-Peucker+Catmull-Rom; "
-                        "bezier=保角最优贝塞尔(直线输出 l, 保尖角)")
+                        "bezier=conformal optimal Bezier (emits l for straight lines, preserves sharp corners)")
     g.add_argument("--fit-tol", type=float, default=0.10,
-                   help="bezier 拟合的最大允许误差 (px)")
+                   help="maximum allowed error of the bezier fit (px)")
     g.add_argument("--corner-deg", type=float, default=62.0,
-                   help="bezier 拟合的角点判定角度")
+                   help="corner detection angle of the bezier fit")
     g.add_argument("--auto-geo-frac", type=float, default=0.5,
-                   help="--fit auto 的几何度门槛 (区域里几何像素占比)")
+                   help="geometricity threshold of --fit auto (share of geometric pixels in the region)")
     g.add_argument("--tex-sigma", type=float, default=2.5,
-                   help="纹理图高通尺度 σ")
+                   help="texture map high-pass scale σ")
     g.add_argument("--tex-smooth", type=float, default=6.0,
-                   help="纹理图能量平滑 σ")
+                   help="texture map energy smoothing σ")
     g.add_argument("--tex-norm", type=float, default=99.5,
-                   help="纹理归一化分位")
+                   help="texture normalization quantile")
     g.add_argument("--tex-thr", type=float, default=3.0,
-                   help="判为几何区的纹理上限 (归一化后)")
+                   help="texture ceiling for classifying a region as geometric (after normalization)")
     g.add_argument("--range-thr", type=float, default=0.02,
-                   help="判为几何区的内部色跨上限 (0.02≈5/255)")
+                   help="interior color spread ceiling for classifying a region as geometric (0.02≈5/255)")
     g.add_argument("--tex-close", type=int, default=0)
     g.add_argument("--tex-open", type=int, default=0)
     g.add_argument("--snap-w", type=float, default=3.0,
-                   help="hybrid 方法: 边缘线在高程里的加成权重 (越大越贴边缘)")
+                   help="hybrid method: bonus weight of edge lines in the elevation (the larger, the closer to the edge)")
     g.add_argument("--snap-sigma", type=float, default=1.0,
-                   help="hybrid 方法: 边缘线加成前的平滑 σ")
+                   help="hybrid method: smoothing σ applied before the edge-line bonus")
     g.add_argument("--snap-erode", type=int, default=2,
-                   help="hybrid 方法: 颜色区域种子的腐蚀半径 (给边界留吸附余地)")
+                   help="hybrid method: erosion radius of the color-region seeds (leaves room for the boundary to snap)")
     g.add_argument("--snap-band", type=float, default=3.0,
-                   help="hybrid 方法: 边界最多允许移动多少像素 (0=不限制)")
+                   help="hybrid method: how many pixels a boundary may move at most (0=unlimited)")
     g.add_argument("--snap-mode", choices=["refine", "watershed", "off"],
                    default="refine",
-                   help="边界吸附方式: refine=轮廓点沿法向亚像素吸到边缘能量脊线 "
-                        "(局部、保拓扑, 默认); watershed=标记控制分水岭重切边界; off=不吸附")
+                   help="snapping mode: refine=snap contour points subpixel along the normal onto the edge energy ridge "
+                        "(local, topology-preserving, default); watershed=marker-controlled watershed re-cuts the boundary; off=no snapping")
     g.add_argument("--snap-shift", type=float, default=1.5,
-                   help="refine 模式: 单点最大吸附位移 (px)")
+                   help="refine mode: maximum snapping displacement per point (px)")
     g.add_argument("--snap-sub", choices=["half", "peak"], default="half",
-                   help="亚像素定心: half=亮度剖面 50%% 交点(更准), peak=能量峰值")
+                   help="subpixel localization: half=50%% crossing of the luma profile (more accurate), peak=energy peak")
     g.add_argument("--snap-step", type=float, default=0.15,
-                   help="refine 模式: 法向剖面采样步长 (px)")
+                   help="refine mode: sampling step of the normal profile (px)")
     g.add_argument("--aa-levels", type=int, default=0,
-                   help="抗锯齿过渡带重建级数 (每侧几条; 0=关闭)。原图边界有 2~3px"
-                        "抗锯齿过渡, 九成平方误差集中在这条带上; 但实测把边界定准"
-                        "以后, 用同色阶梯逼近斜坡反而略降 PSNR (见 README), 故默认关")
+                   help="number of levels for anti-aliasing transition-band reconstruction (how many per side; 0=off). The source boundary has a 2~3px"
+                        "anti-aliasing transition and nine tenths of the squared error sits in that band; but measured, once the boundary is placed accurately, "
+                        "approximating the ramp with same-color steps slightly lowers PSNR (see README), hence off by default")
     g.add_argument("--aa-width", type=float, default=2.5,
-                   help="抗锯齿过渡带总宽 (px), 应≈原图边界过渡宽度")
+                   help="total width of the anti-aliasing transition band (px), should be ≈ the source boundary transition width")
     g.add_argument("--aa-smooth", type=float, default=0.8,
-                   help="距离场平滑 σ (越小越贴原始边界)")
+                   help="distance-field smoothing σ (smaller hugs the original boundary)")
     g.add_argument("--aa-tol", type=float, default=0.15,
-                   help="过渡带轮廓的贝塞尔拟合容差 (px)")
+                   help="Bezier fitting tolerance of the transition-band contour (px)")
     g.add_argument("--aa-geo-thr", type=float, default=-1.0,
-                   help="过渡带准入的几何度阈值 (<0 时用 --auto-geo-frac)")
+                   help="geometricity threshold that admits a region to the transition band (<0 uses --auto-geo-frac)")
     g.add_argument("--aa-min-radius", type=float, default=1.4,
-                   help="色块最大内切半径小于此值就不做过渡带 (避免两侧偏移交叉)")
+                   help="no transition band when the region's maximum inscribed radius is below this value (avoids the two offsets crossing)")
     g.add_argument("--aa-profile", choices=["shape", "uniform"], default="shape",
-                   help="过渡带分级方式: shape=按实测过渡剖面做最优量化, uniform=等宽")
+                   help="transition-band grading: shape=optimal quantization from the measured transition profile, uniform=equal width")
     g.add_argument("--aa-min-area", type=int, default=8,
-                   help="过渡带单段最小像素数")
+                   help="minimum pixel count of one transition-band segment")
     g.add_argument("--aa-synthetic", action=argparse.BooleanOptionalAction, default=False,
-                   help="在**合成边界**上也生成抗锯齿过渡带. 合成边界 = 自适应细化从同一个原始区域"
-                        "切出来的两个子区域之间的分界(颜色天然连续, 过渡带基本是白花的字节); "
-                        "背景边界/其它原始区域边界/真实图像边缘不受影响, 始终保留过渡带. "
-                        "默认关闭(=省掉合成边界的过渡带); --aa-synthetic 恢复旧行为(逐字节)")
+                   help="also build anti-aliasing transition bands on **synthetic boundaries**. A synthetic boundary = the divide between two child"
+                        "regions that adaptive refinement cut out of one and the same original region (the colors are continuous by construction, so the band is essentially wasted bytes); "
+                        "background boundaries / other original-region boundaries / real image edges are unaffected and always keep their band. "
+                        "Off by default (=saves the synthetic-boundary bands); --aa-synthetic restores the old behaviour (byte for byte)")
     g.add_argument("--aa-edge-dedup", action=argparse.BooleanOptionalAction, default=True,
-                   help="把**同一个原始区域**的祖先一路带到细化树的每一层, 用它去重: 细化递归切开后, "
-                        "同一原始区域的后代之间(哪怕不是直接父子, 而是叔侄/堂兄弟)的分界都算合成边界, "
-                        "只保留一份过渡带. 关闭时只认一层父子关系(旧行为, 逐字节). "
-                        "真实图像边缘的过渡带不受影响 (apple@4: 1223→1043 KB, PSNR/MAE/JUMP 不变)")
+                   help="carry the origin of **one and the same original region** all the way down every level of the refinement tree and dedup with it: after the refinement recursion, "
+                        "every divide between descendants of the same original region (even when they are not direct parent/child but uncle/nephew or cousins) counts as a synthetic boundary, "
+                        "and only one band is kept. When off it only knows one level of parent/child (old behaviour, byte for byte). "
+                        "Bands on real image edges are unaffected (apple@4: 1223→1043 KB, PSNR/MAE/JUMP unchanged)")
     g.add_argument("--aa-edge-canon", action=argparse.BooleanOptionalAction, default=False,
-                   help="[实验, 默认关闭] 更激进的去重: 同一原始区域的一组后代里, **真实图像边缘**上只"
-                        "允许面积最大的那个后代生成过渡带, 其余后代只保留合成边界上的过渡带. "
-                        "实测会改变真实边缘的过渡带(每个后代各自负责自己那一段边缘), 因此不建议开启")
+                   help="[experimental, off by default] more aggressive dedup: within one group of descendants of the same original region, only"
+                        "the largest descendant may build transition bands on a **real image edge**, the other descendants keep only the bands on synthetic boundaries. "
+                        "Measured to change the bands on real edges (each descendant is responsible for its own stretch of the edge), so it is not recommended")
     g.add_argument("--contour-min-area", type=float, default=30.0)
 
-    g = p.add_argument_group("渐变")
+    g = p.add_argument_group("gradients")
     g.add_argument("--grad-stops", type=int, default=10)
     g.add_argument("--grad-min-gain", type=float, default=0.12,
-                   help="渐变验收门槛: 线性渐变至少要消掉这个比例的平方误差, 否则该区域退回纯色. "
-                        "平滑渐变图(如柔和 logo/渲染图)可降到 0.02 左右, 显著减少色块台阶")
+                   help="gradient acceptance gate: a linear gradient must remove at least this share of the squared error, otherwise the region falls back to flat color. "
+                        "Smooth gradient images (e.g. soft logos / renders) can go down to about 0.02, which markedly reduces color steps")
     g.add_argument("--auto-gradient", action="store_true",
-                   help="按图像平滑度自动放宽渐变门槛(平滑图自动降门槛), 无需手调")
+                   help="relax the gradient gate automatically from the image smoothness (smooth images get a lower gate), no manual tuning needed")
     g.add_argument("--grad-min-range", type=float, default=0.004,
-                   help="启用线性渐变的色跨下限 (0.004≈1/255; 本图渐变极缓)")
+                   help="lower bound on the color spread that enables a linear gradient (0.004≈1/255; this image's gradients are extremely shallow)")
     g.add_argument("--grad-radial", action=argparse.BooleanOptionalAction, default=True,
-                   help="允许径向渐变(中心+半径)候选: 与线性用同一误差增益判据, 只有当径向残差"
-                        "比最优线性小 --grad-radial-margin 时才采用 (--no-grad-radial 关闭)")
+                   help="allow radial-gradient (center+radius) candidates: they use the same error-gain criterion as linear, and are adopted only when the radial residual"
+                        "is smaller than the best linear one by --grad-radial-margin (turn off with --no-grad-radial)")
     g.add_argument("--grad-radial-margin", type=float, default=GRAD_RADIAL_MARGIN,
-                   help="径向采用的残差优势门槛: 径向残差需比线性残差至少小这个比例")
+                   help="residual-advantage threshold for adopting radial: the radial residual must be at least this ratio smaller than the linear one")
     g.add_argument("--merge-grad", action=argparse.BooleanOptionalAction, default=True,
-                   help="梯度感知区域合并: 相邻色块的并集若能仍被单个渐变(线性/径向)解释, 就合并成"
-                        "更大更平滑的区域, 消除色块台阶 (--no-merge-grad 关闭)")
+                   help="gradient-aware region merging: when the union of adjacent color regions can still be explained by a single gradient (linear/radial), merge it into"
+                        "a larger, smoother region and remove the color steps (turn off with --no-merge-grad)")
     g.add_argument("--merge-grad-tol", type=float, default=0.05,
-                   help="合并判据: 并集的单渐变残差 <= 两个独立拟合残差之和 ×(1+该值)")
+                   help="merge criterion: single-gradient residual of the union <= the sum of the two independent fit residuals ×(1+this value)")
     g.add_argument("--merge-grad-passes", type=int, default=4,
-                   help="梯度感知合并的迭代轮数 (每轮固定扫描顺序, 结果确定)")
+                   help="number of iterations of gradient-aware merging (fixed scan order per pass, deterministic result)")
 
-    g = p.add_argument_group("自适应细化 (误差驱动)")
+    g = p.add_argument_group("adaptive refinement (error-driven)")
     g.add_argument("--adaptive-refine", action=argparse.BooleanOptionalAction, default=True,
-                   help="误差驱动自适应细化: 逐区域量测当前填充(平色/线性/径向)的残差, 残差超阈值"
-                        "就按误差最大方向二分并递归重拟合, 把固定的 SVG 元素预算花在最需要的地方, "
-                        "消除平滑/光泽图上的可见平色块 (--no-adaptive-refine 恢复旧行为; 与旧版"
-                        " --no-grad-radial --no-merge-grad 一样逐字节复原旧输出)")
+                   help="error-driven adaptive refinement: measure the residual of every region's current fill (flat/linear/radial), and when the residual exceeds the threshold"
+                        "bisect along the direction of largest error and re-fit recursively, spending the fixed SVG element budget where it is needed most, "
+                        "which removes the visible flat patches on smooth/glossy images (--no-adaptive-refine restores the old behaviour; combined with"
+                        " --no-grad-radial --no-merge-grad it reproduces the legacy output byte for byte)")
     g.add_argument("--refine-err", type=float, default=0.02,
-                   help="细化的残差阈值(满量程比例, 0.02≈5/255): 区域内部(腐蚀后的核心)中最大通道"
-                        "误差超过该值的像素数达到 max(16, max(32, refine-min-area/4)/2) 以上(即"
-                        "确实存在一块可见的误差)才考虑二分; 局部判据很关键, 大区域上的小块误差几乎"
-                        "不抬高全局 RMS")
+                   help="refinement residual threshold (full-scale share, 0.02≈5/255): a bisection is only considered when the number of pixels in the region interior (eroded core) whose max-channel"
+                        "error exceeds this value reaches max(16, max(32, refine-min-area/4)/2) or more (i.e. a truly visible patch of error exists); the local criterion is essential, because a small patch of error on a large region barely"
+                        "raises the global RMS")
     g.add_argument("--refine-min-area", type=int, default=400,
-                   help="参与细化的最小区域面积; 小于该值的区域保持原样 (防止追着噪点/细缝走)")
+                   help="minimum region area that takes part in refinement; smaller regions are left as they are (prevents chasing noise/thin seams)")
     g.add_argument("--refine-max-depth", type=int, default=6,
-                   help="递归细化的最大深度 (0=只做一轮不递归)")
+                   help="maximum recursion depth of refinement (0=one round, no recursion)")
     g.add_argument("--refine-gain", type=float, default=0.20,
-                   help="二分被接受所需的最小残差下降比例 (子区域面积加权 RMS <= (1-该值)×父区域); "
-                        "这是对噪声/纹理的天然保护, 也是生长速度的阀门")
+                   help="minimum residual drop required to accept a bisection (area-weighted RMS of the children <= (1-this value)×the parent); "
+                        "this is a natural protection against noise/texture and also the valve on how fast it grows")
     g.add_argument("--refine-budget", type=int, default=0,
-                   help="细化新增区域数的上限; 0=自动 (max(64, min(256, 区域数)))")
+                   help="cap on the number of regions refinement may add; 0=auto (max(64, min(256, region count)))")
     g.add_argument("--refine-order", choices=("merge-first", "refine-first"), default="merge-first",
-                   help="细化与梯度感知合并的先后: merge-first=先合并再细化(默认); "
-                        "refine-first=先在原始分区上细化, 再对细化后的分区做梯度合并")
+                   help="order of refinement and gradient-aware merging: merge-first=merge then refine (default); "
+                        "refine-first=refine the original partition first, then gradient-merge the refined partition")
     g.add_argument("--dump-refined-labels", default="",
-                   help="把细化后的标签图写成 .npy (诊断 / 复现 refine-first 顺序); 空=不写")
+                   help="write the refined label map to a .npy (diagnostics / reproducing the refine-first order); empty=do not write")
 
-    g = p.add_argument_group("笔触 (结构张量流线)")
+    g = p.add_argument_group("strokes (structure-tensor streamlines)")
     g.add_argument("--no-strokes", action="store_true",
-                   help="只出几何层; --preset logo 默认即开启")
-    g.add_argument("--spacing", type=float, default=10.0, help="笔触间距")
-    g.add_argument("--occ-ratio", type=float, default=0.45, help="占位半径/间距")
+                   help="emit only the geometric layer; --preset logo enables this by default")
+    g.add_argument("--spacing", type=float, default=10.0, help="stroke spacing")
+    g.add_argument("--occ-ratio", type=float, default=0.45, help="occupancy radius / spacing")
     g.add_argument("--stroke-step", type=float, default=3.0)
     g.add_argument("--stroke-max", type=float, default=120.0)
     g.add_argument("--stroke-min", type=float, default=24.0)
     g.add_argument("--stroke-nodes", type=int, default=12)
     g.add_argument("--stroke-width", type=float, default=7.5)
     g.add_argument("--stroke-grid-units", action="store_true",
-                   help="笔触长度参数按描摹网格px解释(旧行为); 默认按原生像素, 自动乘 --scale")
+                   help="interpret stroke length parameters as tracing-grid px (old behaviour); by default they are native pixels and are multiplied by --scale")
     g.add_argument("--stroke-alpha", type=float, default=0.6)
     g.add_argument("--stroke-jitter", type=float, default=0.012)
     g.add_argument("--stroke-activity-ref", type=float, default=0.012,
-                   help="笔触透明度=stroke-alpha×min(1,残差/该值); 残差来自'图像-底填'")
+                   help="stroke opacity=stroke-alpha×min(1,residual/this value); the residual comes from 'image - base fill'")
     g.add_argument("--stroke-alpha-min", type=float, default=0.03,
-                   help="低于此透明度的笔触直接丢弃")
+                   help="strokes below this opacity are dropped")
     g.add_argument("--coh-min", type=float, default=0.12)
-    g.add_argument("--max-turn", type=float, default=70.0, help="单步最大转折角(度)")
+    g.add_argument("--max-turn", type=float, default=70.0, help="maximum turning angle per step (degrees)")
 
-    g = p.add_argument_group("边缘 / 缝线 (本图的金色缝线已由色块层重建, 故默认关闭)")
+    g = p.add_argument_group("edges / seam lines (this image's golden seam lines are already rebuilt by the color-region layer, hence off by default)")
     g.add_argument("--edge-mode", choices=["off", "chroma", "energy", "both"], default="off",
-                   help="off=不画; chroma=Lab 色度细线; energy=结构张量能量脊线")
-    g.add_argument("--edge-chroma", type=float, default=9.0, help="Lab 色度阈值 (chroma 模式)")
-    g.add_argument("--edge-hi", type=float, default=0.975, help="高能量分位 (energy 模式)")
-    g.add_argument("--edge-lo", type=float, default=0.90, help="滞后低阈值分位 (energy 模式)")
-    g.add_argument("--edge-coh", type=float, default=0.45, help="相干性下限 (energy 模式)")
+                   help="off=do not draw; chroma=Lab chroma thin lines; energy=structure-tensor energy ridges")
+    g.add_argument("--edge-chroma", type=float, default=9.0, help="Lab chroma threshold (chroma mode)")
+    g.add_argument("--edge-hi", type=float, default=0.975, help="high energy quantile (energy mode)")
+    g.add_argument("--edge-lo", type=float, default=0.90, help="hysteresis low threshold quantile (energy mode)")
+    g.add_argument("--edge-coh", type=float, default=0.45, help="coherence lower bound (energy mode)")
     g.add_argument("--edge-width", type=float, default=2.0)
     g.add_argument("--edge-alpha", type=float, default=0.9)
     g.add_argument("--edge-min-area", type=int, default=24)
     g.add_argument("--edge-min-len", type=int, default=8)
-    g.add_argument("--edge-tol", type=float, default=0.6, help="骨架路径简化容差")
+    g.add_argument("--edge-tol", type=float, default=0.6, help="skeleton path simplification tolerance")
 
-    g = p.add_argument_group("着色层 (叠加半透明径向渐变 / gradient boosting; 实验性, 默认关闭)")
+    g = p.add_argument_group("shade layers (stacked translucent radial gradients / gradient boosting; experimental, off by default)")
     g.add_argument("--shade-blobs", action=argparse.BooleanOptionalAction, default=False,
                    help="overlay stacked translucent radial gradients to cancel the 1..6/255 steps "
                         "between neighbouring region fills (the flat polygonal patches / Mach banding "
@@ -715,7 +716,7 @@ def parse_args(argv=None):
 
 
 # ======================================================================
-# 9. output post-processing: slimming / paths / directories
+# output post-processing: slimming / paths / directories
 # ======================================================================
 
 
@@ -769,7 +770,7 @@ def main(argv=None):
             # where merging costs ~0.5 dB and radial-only is strictly better.
             args.merge_grad_tol = max(args.merge_grad_tol, 0.3)
             args.merge_grad_passes = max(args.merge_grad_passes, 8)
-        print(f"      · 自动渐变路由: 平滑度 {_g:.4f} → 渐变门槛 {state.GRAD_MIN_GAIN}",
+        print(f"      · automatic gradient routing: smoothness {_g:.4f} → gradient gate {state.GRAD_MIN_GAIN}",
               file=sys.stderr)
         # Smooth images: their remaining hard steps are the k-means patch boundaries, so also turn on
         # the boundary anti-aliasing staircase (3 levels) unless the user pinned --aa-levels. Tied to
@@ -778,7 +779,7 @@ def main(argv=None):
         if (_g > 0.008 and not _aa_explicit and int(args.aa_levels) <= 0
                 and (args.grad_radial or args.merge_grad)):
             args.aa_levels = 3
-            print("      · 平滑图: 边界抗锯齿过渡带自动开启 (--aa-levels 3, 可用 --aa-levels 0 关闭)",
+            print("      · smooth image: boundary anti-aliasing transition bands enabled automatically (--aa-levels 3, turn off with --aa-levels 0)",
                   file=sys.stderr)
         # Smooth images: the residual that is left after merging is a *graded* residual (the fill is
         # 1-2/255 off over broad shallow ramps), so the refinement error gate can be tightened
@@ -789,8 +790,8 @@ def main(argv=None):
             _re0 = float(args.refine_err)
             args.refine_err = min(_re0, 0.008)
             if args.refine_err < _re0:
-                print(f"      · 平滑图: 自适应细化误差门槛收紧 {_re0} → {args.refine_err} "
-                      f"(可用 --refine-err 覆盖)", file=sys.stderr)
+                print(f"      · smooth image: adaptive-refinement error threshold tightened {_re0} → {args.refine_err} "
+                      f"(override with --refine-err)", file=sys.stderr)
     else:
         state.GRAD_MIN_GAIN = args.grad_min_gain
     state.set_quiet(not args.verbose)
@@ -808,7 +809,7 @@ def main(argv=None):
 
     # ---------------- read the image ----------------
     if not os.path.isfile(args.src):
-        sys.exit(f"[错误] 找不到输入文件: {args.src}")
+        sys.exit(f"[error] input file not found: {args.src}")
     im0 = Image.open(args.src).convert("RGB")
     im = im0
     W0, H0 = im.size
@@ -830,15 +831,15 @@ def main(argv=None):
                         "contour_min_area", "aa_min_area"):
                 if hasattr(args, _nm):
                     setattr(args, _nm, max(1, int(round(getattr(args, _nm) * k * k))))
-            log(f"      · 小图自动缩参 k={k:.3f} (参考盘面 {AUTOSCALE_REF:.0f}px): "
+            log(f"      · parameter auto-scaling for small image k={k:.3f} (reference canvas {AUTOSCALE_REF:.0f}px): "
                 f"min_area={args.min_area}  spacing={args.spacing:.1f}px")
     if args.scale != 1.0:
         im = im.resize((max(32, int(W0 * args.scale)), max(32, int(H0 * args.scale))),
                        Image.LANCZOS)
     W, H = im.size
     rgb = np.asarray(im).astype(np.float64) / 255.0
-    log(f"[{el()}] 读入 {args.src}  {W}x{H}"
-          + (f" (原图 {W0}x{H0})" if args.scale != 1.0 else ""))
+    log(f"[{el()}] read in {args.src}  {W}x{H}"
+          + (f" (source {W0}x{H0})" if args.scale != 1.0 else ""))
 
     # ---------------- edge-preserving smoothing ----------------
     rgb_s = rgb
@@ -855,17 +856,17 @@ def main(argv=None):
         try:
             tf = gpu.structure_tensor(rgb_s, args.sigma_d, args.sigma_i, eps=EPS)
             tc = gpu.structure_tensor(rgb_s, args.cs_sigma_d, args.cs_sigma_i, eps=EPS)
-            log(f"[{el()}] 结构张量: GPU {gpu.device_name()} "
-                f"(显存内, 与 CPU 同双精度累加口径)")
+            log(f"[{el()}] structure tensor: GPU {gpu.device_name()} "
+                f"(in device memory, accumulating in double like the CPU)")
         except Exception as _e:
-            print(f"      ! GPU 结构张量失败({_e}), 退回 CPU", file=sys.stderr)
+            print(f"      ! GPU structure tensor failed ({_e}), falling back to CPU", file=sys.stderr)
             tf = tc = None
     if tf is None:
         tf = structure_tensor(rgb_s, args.sigma_d, args.sigma_i)
         tc = structure_tensor(rgb_s, args.cs_sigma_d, args.cs_sigma_i)
-    log(f"[{el()}] 结构张量: 细尺度(σd={args.sigma_d},σi={args.sigma_i}) "
-          f"平均相干={tf['coh'].mean():.3f} | 粗尺度(σd={args.cs_sigma_d},"
-          f"σi={args.cs_sigma_i}) 平均相干={tc['coh'].mean():.3f}")
+    log(f"[{el()}] structure tensor: fine scale (σd={args.sigma_d},σi={args.sigma_i}) "
+          f"mean coherence={tf['coh'].mean():.3f} | coarse scale (σd={args.cs_sigma_d},"
+          f"σi={args.cs_sigma_i}) mean coherence={tc['coh'].mean():.3f}")
 
     # ---------------- segmentation ----------------
     # --labels-cache: cache the segmentation result. When tuning stroke/gradient/fitting parameters there is no need to rerun segmentation,
@@ -873,8 +874,8 @@ def main(argv=None):
     geo_px = None
     if args.labels_cache and os.path.exists(args.labels_cache):
         labels = np.load(args.labels_cache).astype(np.int32)
-        log(f"[{el()}] 载入分割缓存 {args.labels_cache} "
-              f"({int(labels.max()) + 1} 个色块)")
+        log(f"[{el()}] loaded segmentation cache {args.labels_cache} "
+              f"({int(labels.max()) + 1} color regions)")
     else:
         if args.method == "colors":
             labels = segment_colors(rgb_s, rgb255, args, rng)
@@ -884,7 +885,7 @@ def main(argv=None):
             if args.seg in ("auto", "flat"):
                 labels = segment_flat(rgb_s, rgb255, args, rng)
                 if labels is None and args.seg == "flat":
-                    print("      ! 平色快路径不适用, 退回完整路线", file=sys.stderr)
+                    print("      ! flat-color fast path not applicable, falling back to the full route", file=sys.stderr)
             if args.seg == "flat" and labels is None:
                 labels, geo_px = segment_hybrid(rgb_s, rgb255, tf, args, rng)
             elif args.seg == "full":
@@ -911,11 +912,11 @@ def main(argv=None):
     if getattr(args, "merge_grad", False):
         _t_mg = time.time()
         labels, _n_mg0, _n_mg1 = merge_gradient_regions(rgb_s, labels, tc, args)
-        log(f"[{el()}] 梯度感知合并: {_n_mg0} → {_n_mg1} 个色块 "
+        log(f"[{el()}] gradient-aware merging: {_n_mg0} → {_n_mg1} color regions "
             f"(-{_n_mg0 - _n_mg1}, {time.time() - _t_mg:.1f}s)")
     n_lab = int(labels.max()) + 1
     areas = np.bincount(labels.ravel(), minlength=n_lab)
-    log(f"[{el()}] 分割: {n_lab} 个色块, 面积 {int(areas.min())}~{int(areas.max())} px")
+    log(f"[{el()}] segmentation: {n_lab} color regions, area {int(areas.min())}~{int(areas.max())} px")
     # shared partition-routing criteria (used by curve fitting / boundary snapping / anti-aliasing bands)
     geo_r, tex_r_all, rng_r_all, _t_norm = classify_regions(
         rgb_s, labels, areas, args.tex_sigma, args.tex_smooth, args.tex_norm,
@@ -923,11 +924,11 @@ def main(argv=None):
     if args.verbose:
         _keep = [int(li) for li in np.nonzero(areas >= args.min_area)[0]]
         _ngeo = sum(1 for li in _keep if geo_r[li])
-        _head = ", ".join("#%d:%s(纹理%.1e/色跨%.3f)"
-                          % (li, "几何" if geo_r[li] else "复杂",
+        _head = ", ".join("#%d:%s(texture%.1e/spread%.3f)"
+                          % (li, "geo" if geo_r[li] else "complex",
                              tex_r_all[li], rng_r_all[li]) for li in _keep[:8])
-        print("      · 分区路由(统一判据): %d/%d 个色块判为几何区%s"
-              % (_ngeo, len(_keep), ("; 例: " + _head) if _head else ""))
+        print("      · partition routing (unified criterion): %d/%d color regions classified as geometric%s"
+              % (_ngeo, len(_keep), ("; e.g. " + _head) if _head else ""))
     # energy threshold for subpixel edge snapping (the same threshold as the edge map)
     thr_ref = float(np.quantile(tf["energy"], args.edge_nms_hi))
     _REFINE_STATS.update(pts=0, moved=0, sum=0.0)
@@ -977,9 +978,9 @@ def main(argv=None):
         _inner_all, _cols_bk, _bk_backend = batch_bookkeeping(labels, rgb_s,
                                                              use_gpu=gpu.enabled(args))
         if _inner_all is None:
-            log(f"[{el()}] 批量簿记: 不可用(像素不在 1/255 网格 / 标签过多), 回退逐区域")
+            log(f"[{el()}] batch bookkeeping: unavailable (pixels are not on the 1/255 grid / too many labels), falling back to per-region")
         else:
-            log(f"[{el()}] 批量簿记: {len(areas)} 个标签的掩码+中位色一次算完 "
+            log(f"[{el()}] batch bookkeeping: mask + median color of {len(areas)} labels computed in one pass "
                 f"({time.time() - _t_bk:.1f}s, {_bk_backend})")
 
     regions = []
@@ -995,7 +996,7 @@ def main(argv=None):
                              H=H, W=W, MG=_MG, objs=_objs,
                              inner_all=_inner_all, cols=_cols_bk))
         _t_par = time.time()
-        log(f"[{el()}] 逐区域阶段: {len(_order)} 个候选区域, {_jobs} 进程并行")
+        log(f"[{el()}] per-region stage: {len(_order)} candidate regions, {_jobs} processes in parallel")
         with multiprocessing.get_context("fork").Pool(_jobs) as _pool:
             for _r, _msg, _st in _pool.imap(_par_region_one, _order, chunksize=4):
                 if _r is not None:
@@ -1005,7 +1006,7 @@ def main(argv=None):
                 _REFINE_STATS["pts"] += _st["pts"]
                 _REFINE_STATS["moved"] += _st["moved"]
                 _REFINE_STATS["sum"] += _st["sum"]
-        log(f"      · 并行组装 {len(regions)} 个区域用了 {time.time() - _t_par:.1f}s")
+        log(f"      · parallel assembly of {len(regions)} regions took {time.time() - _t_par:.1f}s")
     else:
         _t_ser = time.time()
         for li in np.argsort(-areas):
@@ -1052,11 +1053,11 @@ def main(argv=None):
                             "geo": geo_frac, "fit": use_fit, "win": win, "off": (y0, x0),
                             "col": col})
             if args.verbose:
-                q = f"{grad['quality']:.2f}({grad['axis']})" if grad else "平色"
-                log(f"      · 区域#{li:<2d} area={int(areas[li]):>7d} {to_hex(col)} "
-                      f"渐变质量={q} 拟合={use_fit}(几何度{geo_frac:.2f})")
+                q = f"{grad['quality']:.2f}({grad['axis']})" if grad else "flat"
+                log(f"      · region #{li:<2d} area={int(areas[li]):>7d} {to_hex(col)} "
+                      f"gradient quality={q} fit={use_fit}(geometricity {geo_frac:.2f})")
 
-        log(f"      · 串行组装 {len(regions)} 个区域用了 {time.time() - _t_ser:.1f}s")
+        log(f"      · serial assembly of {len(regions)} regions took {time.time() - _t_ser:.1f}s")
 
     # ---- error-driven adaptive refinement (see refine_regions) ----
     # Gated on the gradient feature stack as well, so that the legacy flat-colour route
@@ -1066,18 +1067,18 @@ def main(argv=None):
         _lab_ref = labels.copy()
         regions, _rst = refine_regions(rgb_s, tc, regions, args, tf, thr_ref, labels_out=_lab_ref)
         _extra = f", {len(regions) - _rst['n0']:+d}" if _rst["n1"] != _rst["n0"] else ""
-        log(f"[{el()}] 自适应细化: {_rst['n0']} → {_rst['n1']} 个区域{_extra} "
-            f"(二分 {_rst['split']} 次, 其中背景 {_rst['bg_split']}, 最大深度 {_rst['depth']}, "
-            f"评估 {_rst['eval']}, 放弃 {_rst['rejected']}, 预算 {_rst['budget']}, "
-            f"用时 {time.time() - _t_rf:.1f}s)")
+        log(f"[{el()}] adaptive refinement: {_rst['n0']} → {_rst['n1']} regions{_extra} "
+            f"(bisections {_rst['split']}, background {_rst['bg_split']}, max depth {_rst['depth']}, "
+            f"evaluated {_rst['eval']}, rejected {_rst['rejected']}, budget {_rst['budget']}, "
+            f"took {time.time() - _t_rf:.1f}s)")
         if args.merge_grad and args.refine_order == "refine-first":
             _t_rm = time.time()
             _mg, _m0, _m1 = merge_gradient_regions(rgb_s, _lab_ref, tc, args)
             if _m1 < _m0:
                 regions = regroup_regions(rgb_s, regions, _lab_ref, _mg, args, tc, tf, thr_ref)
                 _lab_ref = _mg
-            log(f"[{el()}] 细化后梯度合并(refine-first): {_m0} → {_m1} 个色块, "
-                f"重组为 {len(regions)} 个区域 ({time.time() - _t_rm:.1f}s)")
+            log(f"[{el()}] post-refinement gradient merging (refine-first): {_m0} → {_m1} color regions, "
+                f"regrouped into {len(regions)} regions ({time.time() - _t_rm:.1f}s)")
         labels = _lab_ref                      # keep AA bands / debug consistent with the refined ids
         if args.dump_refined_labels:
             np.save(args.dump_refined_labels, labels)
@@ -1088,8 +1089,8 @@ def main(argv=None):
         aa_segs = aa_band_regions(rgb_s, regions, labels, args, tf, thr_ref)
         regions.extend(aa_segs)
         if aa_segs:
-            print("[%s] 抗锯齿过渡带: %d 段 (每侧 %d 级, 总宽 %.1fpx), 覆盖 %d px, "
-                  "跳过合成边界 %d 段, 跳过重复真实边缘 %d 段 | %.1fs"
+            print("[%s] anti-aliasing transition bands: %d segments (%d levels per side, total width %.1fpx), covering %d px, "
+                  "skipped %d synthetic-boundary segments, skipped %d duplicate real-edge segments | %.1fs"
                   % (el(), len(aa_segs), args.aa_levels, args.aa_width,
                      sum(a["area"] for a in aa_segs), _AA_STATS["skipped_syn"],
                      _AA_STATS["skipped_canon"], time.time() - t_aa))
@@ -1099,8 +1100,8 @@ def main(argv=None):
     # are exactly the key elements of a logo, so they are extracted separately as one vector layer using Lab chroma (drawn on top).
     if _REFINE_STATS["moved"] > 0 and args.verbose:
         _m = _REFINE_STATS["moved"]
-        log(f"      · 亚像素边缘吸附: {_m}/{_REFINE_STATS['pts']} 个轮廓点吸到边缘上, "
-              f"平均位移 {_REFINE_STATS['sum'] / _m:.3f}px (上限 {args.snap_shift}px)")
+        log(f"      · subpixel edge snapping: {_m}/{_REFINE_STATS['pts']} contour points snapped onto edges, "
+              f"mean displacement {_REFINE_STATS['sum'] / _m:.3f}px (limit {args.snap_shift}px)")
     if args.detail_chroma > 0:
         _t_det = time.time()
         lab = rgb2lab(np.clip(rgb_s, 0, 1))
@@ -1134,14 +1135,14 @@ def main(argv=None):
                     log(_msg)
         regions.extend(_det)
         n_det = len(_det)
-        log(f"[{el()}] 细节层(Lab 色度>{args.detail_chroma}): {n_det} 条彩色缝线 "
-              f"(候选分量 {len(_ks)}, {_jobs_det} 进程, 用时 {time.time() - _t_det:.1f}s)")
+        log(f"[{el()}] detail layer (Lab chroma>{args.detail_chroma}): {n_det} colored seam lines "
+              f"(candidate components {len(_ks)}, {_jobs_det} processes, took {time.time() - _t_det:.1f}s)")
 
     n_aa = sum(1 for r in regions if r.get("aa"))
     n_grad = sum(1 for r in regions if r["grad"] is not None)
     n_rad = sum(1 for r in regions if r["grad"] is not None and r["grad"].get("kind") == "radial")
-    log(f"[{el()}] 区域矢量: {len(regions) - n_aa} 条路径 (另有抗锯齿带 {n_aa} 段), "
-          f"其中 {n_grad} 个带渐变 (线性 {n_grad - n_rad} / 径向 {n_rad})")
+    log(f"[{el()}] region geometry: {len(regions) - n_aa} paths (plus {n_aa} anti-aliasing band segments), "
+          f"of which {n_grad} carry a gradient (linear {n_grad - n_rad} / radial {n_rad})")
 
     # ---- stroke activity: residual between the image and the per-region base fill (gradient/flat color), deciding where strokes are needed ----
     act = np.zeros((H, W), np.float32)
@@ -1164,7 +1165,7 @@ def main(argv=None):
                 act[_rows, _cols] = _vals
     act = ndi.gaussian_filter(act, 2.5)
     if args.verbose and act.max() > 0:
-        print(f"      活动度 residual: 均值={act[act>0].mean()*255:.2f}/255 "
+        print(f"      activity residual: mean={act[act>0].mean()*255:.2f}/255 "
               f"p99={np.percentile(act[act>0],99)*255:.2f}/255")
 
     # ---------------- strokes ----------------
@@ -1189,8 +1190,8 @@ def main(argv=None):
                         continue
                     stroke_groups.append(_g)
                     if args.verbose:
-                        log(f"      · 区域#{_g['idx']} (area={_g['area']}) "
-                              f"→ {len(_g['strokes'])} 笔触")
+                        log(f"      · region #{_g['idx']} (area={_g['area']}) "
+                              f"→ {len(_g['strokes'])} strokes")
         else:
             for r in sorted([r for r in regions if not r["bg"] and not r.get("aa")],
                             key=lambda z: -z["area"]):
@@ -1223,9 +1224,9 @@ def main(argv=None):
                     items.append((ribbon_d(pts, wid), col, min(alpha, 0.95)))
                 stroke_groups.append({"idx": r["idx"], "d": r["d"], "strokes": items})
                 if args.verbose:
-                    log(f"      · 区域#{r['idx']} (area={r['area']}) → {len(items)} 笔触")
+                    log(f"      · region #{r['idx']} (area={r['area']}) → {len(items)} strokes")
     n_strokes = sum(len(g["strokes"]) for g in stroke_groups)
-    log(f"[{el()}] 笔触: {n_strokes} 条 (间距 {args.spacing}px)")
+    log(f"[{el()}] strokes: {n_strokes} (spacing {args.spacing}px)")
 
     # ---------------- edges / seam lines ----------------
     edges = []
@@ -1261,9 +1262,9 @@ def main(argv=None):
             else:
                 wq = args.edge_width * (0.8 + 0.8 * min(1.0, float(np.median(tf["coh"][iy, ix]))))
             edges.append((polyline_to_bezier_d(p, closed=False), col, wq, args.edge_alpha))
-        log(f"[{el()}] 边缘/缝线: {len(edges)} 条 ({args.edge_mode} 模式)")
+        log(f"[{el()}] edges/seam lines: {len(edges)} lines ({args.edge_mode} mode)")
     else:
-        log(f"[{el()}] 边缘/缝线: 关闭 (色块层已包含金色缝线)")
+        log(f"[{el()}] edges/seam lines: off (the color-region layer already contains the golden seam lines)")
 
     # ---------------- emit SVG ----------------
     meta = {"bg_fill": to_hex(bg_col), "src": os.path.basename(args.src),
@@ -1284,10 +1285,10 @@ def main(argv=None):
             svg = build_svg(W0, H0, regions, stroke_groups, edges, meta, view_box=(W, H),
                             shade=_sh[:2])
             sh_stats = _sh[2]
-            log(f"[{el()}] 着色层: {sh_stats['n']} 层叠加径向渐变 "
-                f"(平滑区 {sh_stats['area']}px, 盘面积/平滑区 {sh_stats['cov']:.1f}x, "
-                f"底图 {sh_stats['psnr0']:.2f} → 加层后 {sh_stats['psnr']:.2f} dB, "
-                f"用时 {sh_stats['secs']:.1f}s)")
+            log(f"[{el()}] shade layers: {sh_stats['n']} stacked radial gradients "
+                f"(smooth area {sh_stats['area']}px, disk area/smooth area {sh_stats['cov']:.1f}x, "
+                f"base {sh_stats['psnr0']:.2f} → {sh_stats['psnr']:.2f} dB after stacking, "
+                f"took {sh_stats['secs']:.1f}s)")
     raw_kb = len(svg.encode()) / 1024
     if args.compress != "off":
         svg = slim_svg(svg, prec_contour=1,
@@ -1297,8 +1298,8 @@ def main(argv=None):
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(svg)
     out_kb = os.path.getsize(args.out) / 1024
-    extra = "" if args.compress == "off" else f"，{args.compress} 瘦身 {raw_kb:.0f}→{out_kb:.0f} KB"
-    log(f"[{el()}] 写出 {args.out} ({out_kb:.1f} KB{extra})")
+    extra = "" if args.compress == "off" else f", {args.compress} slimming {raw_kb:.0f}→{out_kb:.0f} KB"
+    log(f"[{el()}] wrote {args.out} ({out_kb:.1f} KB{extra})")
 
     gz_path = ""
     if args.gzip:
@@ -1330,7 +1331,7 @@ def main(argv=None):
         for y, x in zip(by[::2].tolist(), bx[::2].tolist()):
             img.putpixel((x, y), (0, 160, 0))
         img.save(args.debug)
-        log(f"      · 调试图 {args.debug}: 线段方向=等照度线, 色相=相干性, 绿=色块边界")
+        log(f"      · debug image {args.debug}: segment direction=isophote, hue=coherence, green=color-region boundary")
 
     # ---------------- preview + fidelity ----------------
     psnr = None
@@ -1346,31 +1347,31 @@ def main(argv=None):
                 mae = float(np.abs(prev - ref).mean())
                 mse = float(((prev - ref) ** 2).mean())
                 psnr = 99.0 if mse <= 0 else 10 * math.log10(255.0 ** 2 / mse)
-                log(f"      · 预览 {args.preview}: 渲回原生 {W0}x{H0}, MAE={mae:.2f}/255 PSNR={psnr:.2f} dB")
+                log(f"      · preview {args.preview}: rendered back at native {W0}x{H0}, MAE={mae:.2f}/255 PSNR={psnr:.2f} dB")
         except ImportError:
-            print("      · 未安装 cairosvg, 跳过预览渲染")
+            print("      · cairosvg is not installed, skipping preview rendering")
         except Exception as exc:
-            log(f"      · 预览渲染失败: {exc}")
+            log(f"      · preview rendering failed: {exc}")
 
     # ---------------- final summary ----------------
-    log(f"[{el()}] 完成")
+    log(f"[{el()}] done")
     if W != W0:
-        grid = f"  →  网格 {W}x{H} (--scale {args.scale:g})"
+        grid = f"  →  grid {W}x{H} (--scale {args.scale:g})"
     else:
         grid = ""
     print("  " + "-" * 62)
-    print(f"  输入   {args.src}  {W0}x{H0}{grid}")
-    print(f"  分区   {len(regions)} 区域 · {n_grad} 渐变 · {n_strokes} 笔触 · {len(edges)} 缝线")
-    print(f"  矢量   {args.out}  {out_kb:.0f} KB" + (f"   ({psnr:.2f} dB)" if psnr else ""))
+    print(f"  input    {args.src}  {W0}x{H0}{grid}")
+    print(f"  regions  {len(regions)} areas · {n_grad} gradients · {n_strokes} strokes · {len(edges)} seams")
+    print(f"  vector   {args.out}  {out_kb:.0f} KB" + (f"   ({psnr:.2f} dB)" if psnr else ""))
     if sh_stats:
-        print(f"  着色   {sh_stats['n']} 层径向渐变 (平滑区 {sh_stats['area']}px, 覆盖 "
+        print(f"  shade    {sh_stats['n']} radial-gradient layers (smooth area {sh_stats['area']}px, coverage "
               f"{sh_stats['cov']:.1f}x)")
     if gz_path:
-        print(f"  压缩   {gz_path}  {os.path.getsize(gz_path)/1024:.0f} KB")
+        print(f"  gzip     {gz_path}  {os.path.getsize(gz_path)/1024:.0f} KB")
     if args.preview and os.path.exists(args.preview):
-        print(f"  预览   {args.preview}")
+        print(f"  preview  {args.preview}")
     if args.debug:
-        print(f"  调试   {args.debug}")
+        print(f"  debug    {args.debug}")
     print("  " + "-" * 62)
     return 0
 

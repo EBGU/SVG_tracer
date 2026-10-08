@@ -12,7 +12,7 @@ from .geometry import fit_bezier_d, fnum, to_hex
 from .state import EPS
 
 # ======================================================================
-# 7. SVG assembly
+# SVG assembly
 # ======================================================================
 
 def aa_ramp_levels(rgb: np.ndarray, tf: dict, thr: float, W2: float, N: int):
@@ -77,7 +77,7 @@ def aa_ramp_levels(rgb: np.ndarray, tf: dict, thr: float, W2: float, N: int):
 
 # Diagnostics for one anti-aliasing pass: how many bands were emitted and how many were dropped
 # because the boundary is a *synthetic* split between two descendants of the same original region.
-# Setting LOGO_AA_DUMP=<path> additionally writes one row per candidate boundary segment, which is
+# Setting SVG_TRACER_AA_DUMP=<path> additionally writes one row per candidate boundary segment, which is
 # how the byte cost of a given boundary class is audited.
 _AA_STATS = {"skipped_syn": 0}
 
@@ -105,9 +105,9 @@ def aa_band_regions(rgb: np.ndarray, entries: list, labels: np.ndarray, args,
     if args.aa_profile == "shape":
         bnds, samps = aa_ramp_levels(rgb, tf, thr, W2, N)
         if args.verbose and bnds is not None:
-            print("      · 过渡带分级(实测剖面): 边界深度 "
+            print("      · transition-band grading (measured profile): boundary depths "
                   + "/".join("%.2f" % b for b in bnds[1:])
-                  + " | 取色深度 " + "/".join("%.2f" % s for s in samps))
+                  + " | sample depths " + "/".join("%.2f" % s for s in samps))
     if bnds is None:
         bnds = np.linspace(0.0, W2, N + 1)
         samps = (bnds[:-1] + bnds[1:]) / 2.0
@@ -122,7 +122,7 @@ def aa_band_regions(rgb: np.ndarray, entries: list, labels: np.ndarray, args,
     keep_syn = bool(getattr(args, "aa_synthetic", True))
     _AA_STATS["skipped_syn"] = 0
     _AA_STATS["skipped_canon"] = 0
-    _aa_rows = [] if os.environ.get("LOGO_AA_DUMP") else None
+    _aa_rows = [] if os.environ.get("SVG_TRACER_AA_DUMP") else None
     root_of = {}
     for r in entries:
         if isinstance(r.get("idx"), (int, np.integer)):
@@ -271,7 +271,7 @@ def aa_band_regions(rgb: np.ndarray, entries: list, labels: np.ndarray, args,
     _REFINE_STATS.update(saved)
     if _aa_rows is not None:
         # region, neighbour, segment length, contour point count, is_synthetic
-        with open(os.environ["LOGO_AA_DUMP"], "w") as fh:
+        with open(os.environ["SVG_TRACER_AA_DUMP"], "w") as fh:
             fh.write("idx\tbl\tm\tnpt\tsyn\n")
             for row in _aa_rows:
                 fh.write("%d\t%d\t%d\t%d\t%d\n" % row)
@@ -347,7 +347,7 @@ def build_svg(width, height, regions, stroke_groups, edges, meta, view_box=None,
             f'<svg xmlns="http://www.w3.org/2000/svg" '
             f'xmlns:xlink="http://www.w3.org/1999/xlink" '
             f'width="{width}" height="{height}" viewBox="0 0 {vw} {vh}">\n'
-            f"<title>{meta.get('src', 'input')} · 结构张量描摹 (structure-tensor tracing)</title>\n"
+            f"<title>{meta.get('src', 'input')} · structure tensor tracing</title>\n"
             f'<desc>{meta["desc"]}</desc>\n')
     return head + "<defs>\n" + "\n".join(defs) + "\n</defs>\n" + "\n".join(body) + "\n</svg>\n"
 
